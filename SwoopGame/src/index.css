@@ -1,0 +1,93 @@
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+}
+
+.header {
+  list-style-type: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #9c9c9c;
+  padding: 8px;
+  margin-bottom: 20px;
+}
+
+.header ul li {
+  float: left;
+}
+
+.header ul li a {
+  display: block;
+  color: #242424;
+  text-align: center;
+  padding: 14px 16px;
+  text-decoration: none;
+}
+
+.header ul li a:hover {
+  background-color: #111111;
+}
+
+.header h4 {
+  color: black;
+}
+
+.card {
+  border: 1px white;
+  border-style: solid;
+  border-radius: 25%;
+  max-width: 5rem;
+  height: 7rem;
+  margin: 10px;
+  display: flex;
+  justify-content: space-between;
+  padding: 1rem;
+  background-color: #9c9c9c;
+  transition: background-color 0.2s ease;
+  align-items: center;
+}
+
+.flipped {
+  border: 1px white;
+  border-style: solid;
+  border-radius: 25%;
+  max-width: 5rem;
+  height: 7rem;
+  margin: 10px;
+  display: flex;
+  justify-content: space-between;
+  padding: 1rem;
+  background-color: blue;
+  transition: background-color 0.2s ease;
+  align-items: center;
+}
+
+.card:hover {
+  cursor: pointer;
+  background-color: whitesmoke;
+}
+
+.card-red h4 {
+  color: firebrick;
+  font-size: x-large;
+}
+
+.card-black h4 {
+  color: black;
+  font-size: x-large;
+}
