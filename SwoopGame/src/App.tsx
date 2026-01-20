@@ -9,6 +9,7 @@ function App() {
   });
   const [npcCardStacks, setNpcCardStacks] = useState<PlayerCardStack[]>([]);
   const [numNpcPlayers, setNumNpcPlayers] = useState(3);
+  const [gameActive, setGameActive] = useState(false);
 
   
   function shuffleCardDeck() {
@@ -54,7 +55,12 @@ function App() {
 
     const deck = shuffleCardDeck();
     if (numNpcPlayers < 2) {
-      alert('Too few players! Abort.')
+      alert('Too few players! Abort.');
+      return;
+    }
+
+    if (numNpcPlayers > 6) {
+      alert('Too many players! Abort.');
       return;
     }
 
@@ -82,6 +88,9 @@ function App() {
         else { fail(`player ${i} cardsInHand`); return; };
       }
 
+      // Sort cardsinHand by rank so they appear organized in the player's hand
+      cardStack.cardsInHand.sort((a, b) => b.value - a.value);
+
       // 2
       for (let j = 0; j < 4; j++) {
         const downCard = deck.pop();
@@ -104,21 +113,109 @@ function App() {
     console.log(cardStacks[0])
     setPlayerCardStack(cardStacks[0]);
     setNpcCardStacks(cardStacks.slice(1));
+    setGameActive(true);
   }
 
-
+  function clearGame() {
+    setPlayerCardStack({
+      tableCards: [],
+      cardsInHand: [],
+    });
+    setTableDeck([]);
+    setNpcCardStacks([]);
+    setGameActive(false);
+  }
 
   return (
     <>
-      <Header />
-      <button onClick={initalizeGame}>Initialize</button>
-        <PlayerCards stack={playerCardStack} />
+      <Header 
+        isGameActive={gameActive}
+        clearGame={clearGame}
+      />
+        {
+          gameActive ? 
+            <Game
+              playerCardStack={playerCardStack}
+              npcCardStacks={npcCardStacks}
+            /> : 
+            <GameSettings setNumNpcPlayers={setNumNpcPlayers} startGame={initalizeGame} />
+        }
       <Footer />
     </>
   )
 }
 
+function GameSettings({
+  setNumNpcPlayers,
+  startGame
+}: {
+  setNumNpcPlayers: (amount: number) => void,
+  startGame: () => void
+}) {
+  return (
+    <div className="settings">
+      <h4>Settings</h4>
+      <label htmlFor="num-players">Number of Players</label>
+      <input
+        type="number"
+        id="num-players"
+        name="num-players"
+        placeholder="Number of players"
+        defaultValue={3}
+        onChange={(e) => setNumNpcPlayers(Number(e.target.value))}
+      />
+      <button onClick={startGame}>Initialize</button>
+    </div>
+  )
+}
 
+function Game(
+  { playerCardStack, npcCardStacks }:
+  { playerCardStack: PlayerCardStack, npcCardStacks: PlayerCardStack[] }
+) {
+  return (
+    <>
+      <Table playerCardStack={playerCardStack} npcCardStacks={npcCardStacks} />
+      <PlayerCardsInHand playerCardStack={playerCardStack} />
+    </>
+  )
+}
+
+function Table(
+  { playerCardStack, npcCardStacks }:
+  { playerCardStack: PlayerCardStack, npcCardStacks: PlayerCardStack[] }
+) {
+  return (
+    <div className="table-container">
+      {
+        npcCardStacks.map((stack: PlayerCardStack, i) => (
+          <div className="npc-wrapper" key={i}>
+            <h4>placeholder</h4>
+          </div>
+        ))
+      }
+
+      {/* Render the player's table cards */}
+      <div className="table-container row-wrap">
+        <h4>Your table cards (visible to all players)</h4>
+        {
+          playerCardStack.tableCards.map((pair, i) => {
+            const faceDown = pair.keys().next();
+            const faceUp = pair.values().next();
+
+            if (faceDown === null && faceUp === null) return (<></>);
+            return (
+              <div className="table-cards-column" key={i}>
+                {(faceDown.value) && (<Card suit={faceDown.value.suit} value={faceDown.value.value} isFlipped />)}
+                {(faceUp.value && (<Card suit={faceUp.value.suit} value={faceUp.value.value} />))}
+              </div>
+            )
+          })
+        }
+      </div>
+    </div>
+  )
+}
 
 interface PlayerCardStack {
   // Key is the face down card, value is the corresponding face up card
@@ -129,18 +226,17 @@ interface PlayerCardStack {
 /**
  * Contains all the cards that a given player has.
  */
-function PlayerCards({stack, isNPC}: { stack: PlayerCardStack, isNPC?: boolean }) {
+function PlayerCardsInHand({ playerCardStack }: { playerCardStack: PlayerCardStack }) {
   const [totalCards, setTotalCards] = useState(-1);
 
   useEffect(() => {
-    console.log(stack)
-    let total = stack.cardsInHand.length;
-    for (const set of stack.tableCards) {
+    let total = playerCardStack.cardsInHand.length;
+    for (const set of playerCardStack.tableCards) {
       set.forEach((card) => total += typeof(card) != 'undefined' ? 1 : 0)
     }
 
     setTotalCards(total);
-  }, [stack]);
+  }, [playerCardStack]);
 
   if (totalCards === 0) {
     return (
@@ -148,20 +244,14 @@ function PlayerCards({stack, isNPC}: { stack: PlayerCardStack, isNPC?: boolean }
     )
   }
 
-  if (isNPC) {
-    // We render all cards as flipped except for tableFaceUp cards
-    return (
-      <h3>TODO</h3>
-    )
-  }
-
   return (
     <>
+      <h4>Cards in your hand (Invisible to other players)</h4>
       {
-        stack.cardsInHand.length > 0 ? (
-          <div className="row">
+        playerCardStack.cardsInHand.length > 0 ? (
+          <div className="row-wrap">
             {
-              stack.cardsInHand.map((card, index) => (
+              playerCardStack.cardsInHand.map((card, index) => (
                 <Card key={index} suit={card.suit} value={card.value} isFlipped={card.isFlipped} />
               ))
             }
@@ -170,7 +260,10 @@ function PlayerCards({stack, isNPC}: { stack: PlayerCardStack, isNPC?: boolean }
           <h3>No cards left in hand</h3>
         )
       }
-      {/* TODO: Render tableCards */}
+      {/* Using row-wrap as its a convenient way to center the div */}
+      <div className="row-wrap">
+        <h5>Cards remaining: {totalCards}</h5>
+      </div>
     </>
   )
 }
@@ -187,11 +280,13 @@ interface Card {
 function Card({ suit, value, isFlipped }: Card) {
   const color: 'black' | 'red' =  // automatically assign color based on suit
     (suit === 'diamonds' || suit === 'hearts') ? 'red' : 'black';
+  
+  const showTrumpCardColor = !isFlipped && (value === 10 || value === 11)
 
   if (isFlipped) return (<div className="flipped"></div>)
   
   return (
-    <div className={`card card-${color}`}>
+    <div className={`card card-${color}${showTrumpCardColor ? ' card-trump' : ''}`}>
       <h4>
         {
           suit === 'diamonds' ? '◆' :
@@ -214,10 +309,20 @@ function Card({ suit, value, isFlipped }: Card) {
 }
 
 
-function Header() {
+function Header(
+  { isGameActive, clearGame }: 
+  { isGameActive: boolean, clearGame: () => void }
+) {
   return (
     <ul className="header">
       <h4>Swoop!</h4>
+      {
+        isGameActive && (
+          <li>
+            Clear Game
+          </li>
+        )
+      }
     </ul>
   )
 }

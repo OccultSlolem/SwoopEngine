@@ -47,6 +47,19 @@ body {
   color: black;
 }
 
+.settings {
+  border: 1px white;
+  border-style: solid;
+  box-sizing: content-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.settings input {
+  margin: 1rem
+}
+
 .card {
   border: 1px white;
   border-style: solid;
@@ -60,6 +73,14 @@ body {
   background-color: #9c9c9c;
   transition: background-color 0.2s ease;
   align-items: center;
+}
+
+.card-trump {
+  background-color: burlywood;
+}
+
+.card-selected {
+  background-color: whitesmoke;
 }
 
 .flipped {
@@ -92,6 +113,28 @@ body {
   font-size: x-large;
 }
 
-.row {
-  display: flex
+.row-wrap {
+  display: flex;
+  flex-flow: row wrap;
+  justify-content: center;
+}
+
+.table-container {
+  border: 1px white;
+  border-style: solid;
+}
+
+.table-cards-column {
+  display: flex;
+  flex-direction: column;
+  margin: 10px;
+}
+
+.table-cards-column > .card {
+  margin-top: -8rem;
+  margin-bottom: 10px;
+}
+
+.centered {
+  text-align: center;
 }
