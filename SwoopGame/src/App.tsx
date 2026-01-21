@@ -190,14 +190,14 @@ function Table(
   })();
 
   function TableCardPair(
-    { faceDownCard, faceUpCard }:
-    { faceDownCard?: Card | null, faceUpCard?: Card | null }
+    { faceDownCard, faceUpCard, preventSelection }:
+    { faceDownCard?: Card | null, faceUpCard?: Card | null, preventSelection?: boolean }
   ) {
     if (faceDownCard === null && faceUpCard === null) return (<></>);
     return (
       <div className="table-cards-column">
-        {(faceDownCard?.rank) && (<Card card={faceDownCard} isFlipped />)}
-        {(faceUpCard?.rank && (<Card card={faceUpCard} />))}
+        {(faceDownCard?.rank) && (<Card card={faceDownCard} isFlipped preventSelection={preventSelection || false} />)}
+        {(faceUpCard?.rank && (<Card card={faceUpCard} preventSelection={preventSelection || false} />))}
       </div>
     )
   }
@@ -209,19 +209,18 @@ function Table(
     suit: 'clubs'
   }
 
-const [totalCards, setTotalCards] = useState(-1);
+const totalCards = (() => {
+  let total = playerCardStack.cardsInHand.length;
+  for (const set of playerCardStack.tableCards) {
+    set.forEach((card) => total += typeof(card) != 'undefined' ? 1 : 0)
+  }
+  return total;
+})();
+
 /**
  * Contains all the cards that a given player has.
  */
 function PlayerCardsInHand() {
-  useEffect(() => {
-    let total = playerCardStack.cardsInHand.length;
-    for (const set of playerCardStack.tableCards) {
-      set.forEach((card) => total += typeof(card) != 'undefined' ? 1 : 0)
-    }
-
-    setTotalCards(total);
-  }, [playerCardStack]);
 
   if (totalCards === 0) {
     return (
@@ -271,6 +270,7 @@ function PlayerCardsInHand() {
                       key={v}
                       faceDownCard={tableCardPair.keys().next().value ?? null}
                       faceUpCard={tableCardPair.values().next().value ?? null}
+                      preventSelection
                     />
                   ))
                 }
