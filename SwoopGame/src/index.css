@@ -17,6 +17,11 @@ body {
   margin: 0;
 }
 
+label {
+  display: flex;
+  align-items: center;
+}
+
 .header {
   list-style-type: none;
   margin: 0;

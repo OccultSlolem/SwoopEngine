@@ -1,4 +1,25 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
+
+interface PlayerCardStack {
+  // Key is the face down card, value is the corresponding face up card
+  // Each one is set to null once played
+  tableCards: Map<Card | null, Card | null>[];
+  cardsInHand: Card[]; // If all three arrays are empty, the player wins!
+}
+
+// 1 = ace, 11 = jack, 12 = queen, 13 = king
+// no jokers
+type CardRank = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
+type CardSuit = 'diamonds' | 'clubs' | 'spades' | 'hearts';
+interface Card {
+  suit: CardSuit;
+  rank: CardRank;
+}
+
+interface AIConnection {
+  address: string
+  port: number
+}
 
 function App() {
   const [tableDeck, setTableDeck] = useState<Card[]>([]);
@@ -10,6 +31,8 @@ function App() {
   const [npcCardStacks, setNpcCardStacks] = useState<PlayerCardStack[]>([]);
   const [numNpcPlayers, setNumNpcPlayers] = useState(3);
   const [gameActive, setGameActive] = useState(false);
+  const [aiBridgeWebsocket, setAiBridgeWebsocket] = useState<WebSocket | null>(null);
+  const [aiConnections, setAiConnections] = useState<AIConnection[]>([]);
 
   
   function shuffleCardDeck() {
@@ -135,7 +158,13 @@ function App() {
               npcCardStacks={npcCardStacks}
               liveCards={liveCards}
             /> : 
-            <GameSettings setNumNpcPlayers={setNumNpcPlayers} startGame={initalizeGame} />
+            <GameSettings 
+              numNpcPlayers={numNpcPlayers}
+              setNumNpcPlayers={setNumNpcPlayers} 
+              startGame={initalizeGame}
+              aiBridgeWebSocket={aiBridgeWebsocket}
+              setAiBridgeWebsocket={setAiBridgeWebsocket}
+            />
         }
 
       <Footer />
@@ -144,24 +173,145 @@ function App() {
 }
 
 function GameSettings({
+  numNpcPlayers,
   setNumNpcPlayers,
-  startGame
+  startGame,
+  aiBridgeWebSocket,
+  setAiBridgeWebsocket
 }: {
+  numNpcPlayers: number,
   setNumNpcPlayers: (amount: number) => void,
-  startGame: () => void
+  startGame: () => void,
+  aiBridgeWebSocket: WebSocket | null,
+  setAiBridgeWebsocket: (ws: WebSocket | null) => void
 }) {
+  const [aiBridgeAddress, setAiBridgeAddress] = useState('127.0.0.1');
+  const [aiBridgePort, setAiBridgePort] = useState(8000);
+
+  type ConnectionStatus = 'IDLE' | 'SUCCESS' | 'LOADING' | 'FAILED';
+  const [aiBridgeConnectionStatus, setAiBridgeConnectionStatus] = useState<ConnectionStatus>('IDLE');
+
+  const numPlayersRef = useRef(3);
+
+  function validateNumNpcPlayers() {
+    if (numPlayersRef.current > 6) {
+      alert('Too many NPC players! Max 6.')
+      return;
+    }
+
+    if (numPlayersRef.current < 1) {
+      alert('Too few NPC players! Minimum 1.')
+      return;
+    }
+
+    console.log(`numplayers ${numPlayersRef.current}`)
+
+    setNumNpcPlayers(numPlayersRef.current);
+  }
+
+  function connectAiBridge() {
+    if (aiBridgePort < 0) {
+      alert('AI Bridge port must be a positive number');
+      return;
+    }
+
+    if (aiBridgeAddress === '') {
+      alert('AI Bridge address is empty.');
+      return;
+    }
+
+    setAiBridgeConnectionStatus('LOADING');
+    const ws = new WebSocket(`ws://${aiBridgeAddress}:${aiBridgePort}/ws`);
+    let connectionSuccessful = false;
+    
+    ws.addEventListener('open', (_) => {
+      console.log('Connected to server');
+      setAiBridgeConnectionStatus('SUCCESS');
+      setAiBridgeWebsocket(ws);
+      connectionSuccessful = true;
+    });
+
+    ws.addEventListener('close', (_) => {
+      console.log('Disconnected from server');
+      if (connectionSuccessful) setAiBridgeConnectionStatus('IDLE');
+      setAiBridgeWebsocket(null);
+    });
+
+    ws.addEventListener('error', (e) => {
+      console.error(`Connection error: ${e}`);
+      setAiBridgeConnectionStatus('FAILED');
+      setAiBridgeWebsocket(null);
+    });
+
+    // TODO: Actual message handlers. Will likely add in a higher-level function
+    // in order to handle interactions with the AIs.
+    ws.addEventListener('message', (e) => {
+      console.log(`Received message: ${e.data}`);
+    })
+  }
+
+  function disconnectAIBridge() {
+    aiBridgeWebSocket?.close();
+  }
+
   return (
     <div className="settings">
       <h4>Settings</h4>
-      <label htmlFor="num-players">Number of Players</label>
-      <input
-        type="number"
-        id="num-players"
-        name="num-players"
-        placeholder="Number of players"
-        defaultValue={3}
-        onChange={(e) => setNumNpcPlayers(Number(e.target.value))}
-      />
+      <h5>Number of NPC players: {numNpcPlayers}</h5>
+      <label htmlFor="num-players">Number of Players
+        <input
+          type="number"
+          id="num-players"
+          name="num-players"
+          placeholder="Number of players"
+          defaultValue={3}
+          onChange={(e) => numPlayersRef.current = parseInt(e.target.value, 10)}
+        />
+        <button onClick={validateNumNpcPlayers}>
+          Set
+        </button>
+      </label>
+
+      <label htmlFor="ai-bridge-address">AI Bridge Address
+        <input
+          type="text"
+          id="ai-bridge-address"
+          name="ai-bridge-address"
+          placeholder="AI Bridge Address"
+          defaultValue={'127.0.0.1'}
+          onChange={(e) => setAiBridgeAddress(e.target.value)}
+        />
+      </label>
+
+      <label htmlFor="ai-bridge-port">AI Bridge Port
+        <input
+          type="number"
+          id="ai-bridge-port"
+          name="ai-bridge-port"
+          placeholder="AI Bridge Port"
+          defaultValue={8000}
+          onChange={(e) => setAiBridgePort(parseInt(e.target.value, 10))}
+        />
+      </label>
+
+      <div className="row-wrap">
+        <p>AI Bridge Status: {aiBridgeConnectionStatus}</p>
+        {
+          aiBridgeWebSocket !== null ? (
+            <button onClick={disconnectAIBridge}>Disconnect</button>
+          ) : (
+            <button onClick={connectAiBridge}>Connect</button>
+          )
+        }
+      </div>
+
+      {/* FIXME: Remove this test code */}
+      {
+        !!aiBridgeWebSocket && (
+          <button onClick={(_) => aiBridgeWebSocket.send('Test')}>Test</button>
+        )
+      }
+
       <button onClick={startGame}>Initialize</button>
     </div>
   )
@@ -324,21 +474,6 @@ function PlayerCardsInHand() {
   )
 }
 
-interface PlayerCardStack {
-  // Key is the face down card, value is the corresponding face up card
-  // Each one is set to null once played
-  tableCards: Map<Card | null, Card | null>[];
-  cardsInHand: Card[]; // If all three arrays are empty, the player wins!
-}
-
-// 1 = ace, 11 = jack, 12 = queen, 13 = king
-// no jokers
-type CardRank = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
-type CardSuit = 'diamonds' | 'clubs' | 'spades' | 'hearts';
-interface Card {
-  suit: CardSuit;
-  rank: CardRank;
-}
 function Card(
   { card, isFlipped, preventSelection }: 
   { card: Card, isFlipped?: boolean, preventSelection?: boolean}
