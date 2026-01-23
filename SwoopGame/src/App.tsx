@@ -33,6 +33,7 @@ function App() {
   const [gameActive, setGameActive] = useState(false);
   const [aiBridgeWebsocket, setAiBridgeWebsocket] = useState<WebSocket | null>(null);
   const [aiConnections, setAiConnections] = useState<AIConnection[]>([]);
+  const [playerIsAI, setPlayerIsAI] = useState(false);
 
   
   function shuffleCardDeck() {
@@ -164,6 +165,8 @@ function App() {
               startGame={initalizeGame}
               aiBridgeWebSocket={aiBridgeWebsocket}
               setAiBridgeWebsocket={setAiBridgeWebsocket}
+              playerIsAi={playerIsAI}
+              setPlayerIsAi={setPlayerIsAI}
             />
         }
 
@@ -177,13 +180,17 @@ function GameSettings({
   setNumNpcPlayers,
   startGame,
   aiBridgeWebSocket,
-  setAiBridgeWebsocket
+  setAiBridgeWebsocket,
+  playerIsAi,
+  setPlayerIsAi
 }: {
   numNpcPlayers: number,
   setNumNpcPlayers: (amount: number) => void,
   startGame: () => void,
   aiBridgeWebSocket: WebSocket | null,
-  setAiBridgeWebsocket: (ws: WebSocket | null) => void
+  setAiBridgeWebsocket: (ws: WebSocket | null) => void,
+  playerIsAi: boolean,
+  setPlayerIsAi: (value: boolean) => void
 }) {
   const [aiBridgeAddress, setAiBridgeAddress] = useState('127.0.0.1');
   const [aiBridgePort, setAiBridgePort] = useState(8000);
@@ -257,8 +264,8 @@ function GameSettings({
   return (
     <div className="settings">
       <h4>Settings</h4>
-      <h5>Number of NPC players: {numNpcPlayers}</h5>
-      <label htmlFor="num-players">Number of Players
+      <h5>Number of NPC players: {(numNpcPlayers + (playerIsAi ? 1 : 0))}</h5>
+      <label htmlFor="num-players">Number of NPC Players
         <input
           type="number"
           id="num-players"
@@ -292,6 +299,15 @@ function GameSettings({
           defaultValue={8000}
           onChange={(e) => setAiBridgePort(parseInt(e.target.value, 10))}
         />
+      </label>
+
+      <label htmlFor="player-is-ai">AI-only game
+        <input
+          type="checkbox"
+          id="player-is-ai"
+          name="player-is-ai"
+          onChange={(e) => setPlayerIsAi(e.target.checked)}
+        ></input>
       </label>
 
       <div className="row-wrap">
