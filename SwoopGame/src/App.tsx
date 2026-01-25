@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface PlayerCardStack {
   // Key is the face down card, value is the corresponding face up card
@@ -16,9 +16,11 @@ interface Card {
   rank: CardRank;
 }
 
+type ConnectionStatus = 'IDLE' | 'SUCCESS' | 'LOADING' | 'FAILED';
 interface AIConnection {
   address: string
   port: number
+  connectionStatus: ConnectionStatus
 }
 
 function App() {
@@ -34,6 +36,23 @@ function App() {
   const [aiBridgeWebsocket, setAiBridgeWebsocket] = useState<WebSocket | null>(null);
   const [aiConnections, setAiConnections] = useState<AIConnection[]>([]);
   const [playerIsAI, setPlayerIsAI] = useState(false);
+
+  useEffect(() => {
+    // FIXME: If the number of NPC players changes, all the existing connection settings
+    // get dropped. Obviously this is bad and clunky.
+
+    const numberSettingsNeeded = numNpcPlayers + (playerIsAI ? 1 : 0);
+    const newSettings: AIConnection[] = [];
+    for (let i = 0; i < numberSettingsNeeded; i++) {
+      newSettings.push({
+        address: '127.0.0.1',
+        port: 8001,
+        connectionStatus: 'IDLE'
+      });
+    }
+
+    setAiConnections(newSettings);
+  }, [numNpcPlayers, playerIsAI]);
 
   
   function shuffleCardDeck() {
@@ -167,6 +186,8 @@ function App() {
               setAiBridgeWebsocket={setAiBridgeWebsocket}
               playerIsAi={playerIsAI}
               setPlayerIsAi={setPlayerIsAI}
+              aiConnections={aiConnections}
+              setAiConnections={setAiConnections}
             />
         }
 
@@ -182,7 +203,9 @@ function GameSettings({
   aiBridgeWebSocket,
   setAiBridgeWebsocket,
   playerIsAi,
-  setPlayerIsAi
+  setPlayerIsAi,
+  aiConnections,
+  setAiConnections
 }: {
   numNpcPlayers: number,
   setNumNpcPlayers: (amount: number) => void,
@@ -190,15 +213,54 @@ function GameSettings({
   aiBridgeWebSocket: WebSocket | null,
   setAiBridgeWebsocket: (ws: WebSocket | null) => void,
   playerIsAi: boolean,
-  setPlayerIsAi: (value: boolean) => void
+  setPlayerIsAi: (value: boolean) => void,
+  aiConnections: AIConnection[],
+  setAiConnections: (value: AIConnection[]) => void
 }) {
   const [aiBridgeAddress, setAiBridgeAddress] = useState('127.0.0.1');
   const [aiBridgePort, setAiBridgePort] = useState(8000);
 
-  type ConnectionStatus = 'IDLE' | 'SUCCESS' | 'LOADING' | 'FAILED';
   const [aiBridgeConnectionStatus, setAiBridgeConnectionStatus] = useState<ConnectionStatus>('IDLE');
 
   const numPlayersRef = useRef(3);
+
+  function AIPlayerSettings({ index }: { index: number }) {
+    const htmlAddressName = `npc-${index}-address`;
+    const htmlPortName = `npc-${index}-port`
+    const aiRef = aiConnections[index];
+
+    if (!aiRef) return <></>
+
+    // TODO: Apply the changes lol
+
+    return (
+      <div className="table-container">
+        <label htmlFor={htmlAddressName}>AI Player {index + 1} address
+          <input
+            type="text"
+            id={htmlAddressName}
+            name={htmlAddressName}
+            placeholder={`AI Player ${index + 1} address`}
+            defaultValue={'127.0.0.1'}
+            onChange={(e) => setAiBridgeAddress(e.target.value)}
+          />
+        </label>
+        <label htmlFor={htmlPortName}>AI Bridge Port
+          <input
+            type="number"
+            id={htmlPortName}
+            name={htmlPortName}
+            placeholder="AI Bridge Port"
+            defaultValue={8000}
+            onChange={(e) => setAiBridgePort(parseInt(e.target.value, 10))}
+          />
+        </label>
+        <div className="row-wrap">
+          <p>Connection status: </p>
+        </div>
+      </div>
+    )
+  }
 
   function validateNumNpcPlayers() {
     if (numPlayersRef.current > 6) {
@@ -265,7 +327,7 @@ function GameSettings({
     <div className="settings">
       <h4>Settings</h4>
       <h5>Number of NPC players: {(numNpcPlayers + (playerIsAi ? 1 : 0))}</h5>
-      <label htmlFor="num-players">Number of NPC Players
+      <label htmlFor="num-players">Number of AI Players
         <input
           type="number"
           id="num-players"
@@ -328,7 +390,11 @@ function GameSettings({
         )
       }
 
-      <button onClick={startGame}>Initialize</button>
+      {/* {
+        ((numNpcPlayers + playerIsAi ? 1 : 0))
+      } */}
+
+      <button onClick={startGame}>Start!</button>
     </div>
   )
 }
