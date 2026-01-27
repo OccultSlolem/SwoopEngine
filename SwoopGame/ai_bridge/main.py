@@ -21,10 +21,26 @@ class PlayerCardStack(BaseModel):
     table_cards: List[Dict[Optional[Card], Optional[Card]]]
     cards_in_hand: List[Card]
 
+class TurnAction(BaseModel):
+    class PlayedFrom(str, Enum):
+        CARDS_IN_HAND = "cards_in_hand"
+        UPSIDE_DOWN_TABLE_CARD = "upside_down_table_card"
+        RIGHTSIDE_UP_TABLE_CARD = "rightside_up_table_card"
+
+    played_from: PlayedFrom
+    player: int
+    rank_played: int
+    number_of_cards_played: int
+    was_swoop: bool
+    was_winning_move: bool
 class GameState(BaseModel):
     table_deck: List[Card]
     live_cards: List[Card]
-    card_stacks: List[PlayerCardStack] # Assume position 0 is the player if player is not AI
+    player_card_stacks: List[PlayerCardStack] # Assume position 0 is the player if player is not AI
+    player_points: List[int] # The number of points each player has. Like golf, fewer is better.
+    playing_to: int # Once any one player reaches this many points, the game ends.
+    player_turn: int
+    turn_actions: TurnAction
     game_active: bool
 
 
@@ -75,15 +91,18 @@ def initialize_card_deck(num_players: int):
         "player_card_stacks": player_stacks
     }
 
-        
+class IncorrectPlayerAmountException(Exception):
+    pass
 
 class Game:
     """Represents a single game instance"""
-    def __init__(self, num_players: int):
-        game_state = GameState(
+    def __init__(self, playing_to: int):
+        self.game_state = GameState(
             table_deck=[],
             live_cards=[],
-            card_stacks=[],
+            player_card_stacks=[],
+            player_turn=0,
+            playing_to=playing_to,
             game_active=False
         )
         self.players: List[WebSocket] = []
@@ -94,6 +113,33 @@ class Game:
     def remove_player(self, websocket: WebSocket):
         self.players.remove(websocket)
     
+    def start_game(self):
+        num_players = len(self.players)
+
+        if num_players < 2 or num_players > 6:
+            raise IncorrectPlayerAmountException("Games must have between 2 and 6 players.")
+
+        deck = initialize_card_deck(num_players)
+        self.game_state.player_card_stacks = deck["player_card_stacks"]
+        self.game_state.table_deck = deck["table_deck"]
+        self.game_state.game_active = True
+        self.broadcast_all(self.game_state)
+    
+    def process_turn():
+        # 1. Parse what the player did
+        # 2. Ensure that the action was legal
+        # 3. Check if the move resulted in a win (last card played)
+        # 3a - Calculate points. If a player won, log the results and moves of the game
+        # for ML training
+        # 4. If no win, check if a swoop occured and clear live_cards if so.
+        #   - A swoop occurs if a 10 or jack is played, or if the move results in the
+        #   last four or more cards having equal rank.
+        # 5. If the player passed, they pick up all live_cards.
+        # 6. Log the turn action and results.
+        # 7. Broadcast the new game state.
+
+        pass
+    
     async def broadcast_all(self, message: str):
         for player in self.players:
             await player.send_text(message)
@@ -102,11 +148,13 @@ class GameManager:
     """Singleton class that manages all active game sessions"""
     def __init__(self):
         # The str represents a unique game ID
-        self.active_games: Dict[str, Game] = {}
+        self.active_games: Dict["game_id": str, "game_state": Game] = {}
     
-    def create_game(self, num_players):
+    def create_game(self):
         game_id = uuid4()
-        self.active_games[game_id: game_id, ]
+        game_state = Game()
+        self.active_games["game_id": game_id, "game_state": game_state]
+        return game_id
 
 # --- FastAPI Application
 
