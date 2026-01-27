@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 from uuid import uuid4
 from enum import Enum
 from random import shuffle
-from math import floor
 
 # --- Swoop logic
 
@@ -37,14 +36,12 @@ def initialize_card_deck(num_players: int):
 
     # 1
     SUITS: List[CardSuit] = list(CardSuit)
-    deck: List[Card] = []
+    four_card_decks: List[Card] = []
 
     for _ in range(4):
         for suit in SUITS:
             for rank in range(1, 14):
                 four_card_decks.append(Card(suit=suit, rank=rank))
-    
-    four_card_decks: List[Card] = []
     
     # 2
 
@@ -75,7 +72,7 @@ def initialize_card_deck(num_players: int):
     # 4
     return {
         "table_deck": shuffled_deck,
-        "card_stacks": player_stacks
+        "player_card_stacks": player_stacks
     }
 
         
