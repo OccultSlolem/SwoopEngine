@@ -390,9 +390,11 @@ function GameSettings({
         )
       }
 
-      {/* {
-        ((numNpcPlayers + playerIsAi ? 1 : 0))
-      } */}
+      {
+        aiConnections.map((_, i) => (
+          <AIPlayerSettings index={i} key={i} />
+        ))
+      }
 
       <button onClick={startGame}>Start!</button>
     </div>

@@ -14,11 +14,17 @@ class TestCardsFunctionality(unittest.TestCase):
         table = initialize_card_deck(4)
         table_deck = table["table_deck"]
         player_card_stacks = table["player_card_stacks"]
+        # Make sure the first four cards are not all exactly equal
+        # Technically this could happen by pure chance as we use four card decks,
+        # but the possibility is astronomically small. If this fails, try running it again.
         self.assertFalse(all(card == table_deck[0] for card in table_deck[1:4]))
         self.assertEqual(len(player_card_stacks), 4)
         face_up_cards = []
         face_down_cards = []
         for stack in player_card_stacks:
+            # Make sure that the relevant card stacks exist with the correct cards and
+            # that they are not all the same - another technically possible but extremely
+            # unlikely thing to occur.
             self.assertTrue(hasattr(stack, "table_cards"))
             table_cards_list = stack.table_cards
             self.assertEqual(len(table_cards_list), 4)
