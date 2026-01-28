@@ -224,40 +224,40 @@ function GameSettings({
 
   const numPlayersRef = useRef(3);
 
-  function AIPlayerSettings({ index }: { index: number }) {
-    const htmlAddressName = `npc-${index}-address`;
-    const htmlPortName = `npc-${index}-port`
+  function AIPlayerStatus({ index }: { index: number }) {
     const aiRef = aiConnections[index];
 
     if (!aiRef) return <></>
 
-    // TODO: Apply the changes lol
+    function ConnectionStatus() {
+      switch(aiRef.connectionStatus) {
+        case 'FAILED':
+          return ( <h3 className="text-red">CONNECTION FAILED</h3> )
+        case 'IDLE':
+          return ( <h3>CONNECTION IDLE</h3> )
+        case 'LOADING':
+          return ( <h3>LOADING...</h3> )
+        case 'SUCCESS':
+          return ( <h3 className="text-green">CONNECTED</h3> )
+      }
+    }
+
+    function ConnectionDetails() {
+      if (aiRef.connectionStatus !== 'SUCCESS') return <></>
+      return (
+        <>
+          <p>Address: {aiRef.address}</p>
+          <p>Port: {aiRef.port}</p>
+        </>
+      )
+    }
 
     return (
-      <div className="table-container">
-        <label htmlFor={htmlAddressName}>AI Player {index + 1} address
-          <input
-            type="text"
-            id={htmlAddressName}
-            name={htmlAddressName}
-            placeholder={`AI Player ${index + 1} address`}
-            defaultValue={'127.0.0.1'}
-            onChange={(e) => setAiBridgeAddress(e.target.value)}
-          />
-        </label>
-        <label htmlFor={htmlPortName}>AI Bridge Port
-          <input
-            type="number"
-            id={htmlPortName}
-            name={htmlPortName}
-            placeholder="AI Bridge Port"
-            defaultValue={8000}
-            onChange={(e) => setAiBridgePort(parseInt(e.target.value, 10))}
-          />
-        </label>
-        <div className="row-wrap">
-          <p>Connection status: </p>
-        </div>
+      <div className="table-container padding-margin centered">
+        <h3>Player {index + 1}</h3>
+        <hr />
+        <ConnectionStatus />
+        <ConnectionDetails />
       </div>
     )
   }
@@ -390,11 +390,13 @@ function GameSettings({
         )
       }
 
-      {
-        aiConnections.map((_, i) => (
-          <AIPlayerSettings index={i} key={i} />
-        ))
-      }
+      <div className="row-wrap">
+        {
+          aiConnections.map((_, i) => (
+            <AIPlayerStatus index={i} key={i} />
+          ))
+        }
+      </div>
 
       <button onClick={startGame}>Start!</button>
     </div>

@@ -18,8 +18,12 @@ class Card(BaseModel):
     suit: CardSuit
     rank: int = Field(..., ge=1, le=13)
 
+class TableCardPair(BaseModel):
+    face_down_card: Optional[Card]
+    face_up_card: Optional[Card]
+
 class PlayerCardStack(BaseModel):
-    table_cards: List[Dict[Optional[Card], Optional[Card]]]
+    table_cards: List[TableCardPair]
     cards_in_hand: List[Card]
 
 class PlayedFrom(str, Enum):
@@ -40,8 +44,12 @@ class TurnActionLog(BaseModel):
     rank_played: int
     number_of_cards_played: int
 
+class CardPlay(BaseModel):
+    card: Card
+    played_from: PlayedFrom
+
 class TurnActionRequest(BaseModel):
-    cards_played: List[Dict[Card, PlayedFrom]]
+    cards_played: List[CardPlay]
 
 class GameState(BaseModel):
     table_deck: List[Card]
@@ -91,7 +99,7 @@ def initialize_card_deck(num_players: int):
         for _ in range(4):
             card_down = shuffled_deck.pop()
             card_up = shuffled_deck.pop()
-            stack.table_cards.append({ "face_down_card": card_down, "face_up_card": card_up })
+            stack.table_cards.append(TableCardPair(face_down_card=card_down, face_up_card=card_up))
         
         player_stacks.append(stack)
     
@@ -115,8 +123,8 @@ def is_swoop(rank_played: int, num_cards_played: int, live_cards: List[Card]) ->
     if num_cards_played >= 4: return True
     
     if len(live_cards) == 0: return False
-    top_of_live_cards = live_cards[-1]
-    if top_of_live_cards != rank_played: return False
+    latest_live_card_rank = live_cards[-1].rank
+    if latest_live_card_rank != rank_played: return False
 
     count = 0
     for card in reversed(live_cards):
@@ -149,8 +157,10 @@ class Game:
             table_deck=[],
             live_cards=[],
             player_card_stacks=[],
+            player_points=[],
             player_turn=0,
             playing_to=playing_to,
+            turn_actions=[],
             game_active=False
         )
         self.players: List[WebSocket] = []
@@ -161,7 +171,7 @@ class Game:
     def remove_player(self, websocket: WebSocket):
         self.players.remove(websocket)
     
-    def start_game(self):
+    async def start_game(self):
         num_players = len(self.players)
 
         if num_players < 2 or num_players > 6:
@@ -171,20 +181,16 @@ class Game:
         self.game_state.player_card_stacks = deck["player_card_stacks"]
         self.game_state.table_deck = deck["table_deck"]
         self.game_state.game_active = True
-        self.broadcast_all(self.game_state)
+        await self.broadcast_all(self.game_state.model_dump_json())
     
     def process_turn(self, player: int, action_request: TurnActionRequest) -> TurnOutcome:
         # 1. Parse what the player did
-        # 2. Ensure that the action was legal
-        # 3. Check if the move resulted in a win (last card played)
-        # 3a - Calculate points. If a player won, log the results and moves of the game
-        # for ML training
-        # 4. If no win, check if a swoop occured and clear live_cards if so.
-        #   - A swoop occurs if a 10 or jack is played, or if the move results in the
-        #   last four or more cards having equal rank.
-        # 5. If the player passed, they pick up all live_cards.
-        # 6. Log the turn action and results.
-        # 7. Broadcast the new game state.
+        # 2. If the player passed, they must pick up all cards on table
+        # 3. Ensure that the action was legal
+        # 4. Check if the move resulted in a win (last card played)
+        # 5. If no win, check if a swoop occured and clear live_cards if so.
+        # 6. Return the turn outcome.
+
         if not self.game_state.game_active:
             raise GameNotStartedException("The game has not started.")
         
@@ -194,86 +200,100 @@ class Game:
         if player < 0:
             raise BadArgumentException("Attempted to play on a negative player.")
         
-        if player > len(self.game_state.player_card_stacks):
+        if player >= len(self.game_state.player_card_stacks):
             raise IncorrectPlayerAmountException("Attempted to act on a nonexistent player.")
         
         player_stack = self.game_state.player_card_stacks[player]
+        if len(action_request.cards_played) == 0:
+            # The player passed, they must pick up all cards on table
+            player_stack.cards_in_hand.extend(self.game_state.live_cards)
+            self.game_state.live_cards = []
+            return TurnOutcome.PICKED_UP_CARDS_ON_TABLE
+        
         top_live_rank = self.game_state.live_cards[-1].rank if len(self.game_state.live_cards) > 0 else inf
 
         # Validate that the cards played exist in the player's stack
-        for card_dict in action_request.cards_played:
-            card_played = list(card_dict.keys())[0]
-            played_from = list(card_dict.values())[0]
+        for play in action_request.cards_played:
+            card_played = play.card
+            played_from = play.played_from
 
             if played_from == PlayedFrom.CARDS_IN_HAND:
                 if card_played not in player_stack.cards_in_hand:
                     raise IllegalMoveException(f"Card {card_played} not in player's hand.")
             elif played_from == PlayedFrom.RIGHTSIDE_UP_TABLE_CARD:
-                if not any(d.get("face_up_card") == card_played for d in player_stack.table_cards):
+                if not any(d.face_up_card == card_played for d in player_stack.table_cards):
                     raise IllegalMoveException(f"Card {card_played} not on player's face-up table cards.")
             elif played_from == PlayedFrom.UPSIDE_DOWN_TABLE_CARD:
-                if not any(d.get("face_down_card") == card_played for d in player_stack.table_cards):
+                if not any(d.face_down_card == card_played for d in player_stack.table_cards):
                     raise IllegalMoveException(f"Card {card_played} not on player's face-down table cards.")
 
         # Check if the player put down an upside down table card
         if any(
-            played_from == PlayedFrom.UPSIDE_DOWN_TABLE_CARD
-            for card_dict in action_request.cards_played
-            for played_from in card_dict.values()
+            play.played_from == PlayedFrom.UPSIDE_DOWN_TABLE_CARD
+            for play in action_request.cards_played
         ):
             # This is a blind play. The player doesn't know what card they are playing.
             # They can only play one card.
             if len(action_request.cards_played) > 1:
                 raise IllegalMoveException("When playing a face-down card, you can only play that one card.")
             
-            card_played = list(action_request.cards_played[0].keys())[0]
-            if card_played.rank > top_live_rank: return TurnOutcome.PICKED_UP_CARDS_ON_TABLE
+            card_played = action_request.cards_played[0].card
+            if card_played.rank > top_live_rank: 
+                player_stack.cards_in_hand.extend(self.game_state.live_cards)
+                self.game_state.live_cards = []
+                return TurnOutcome.PICKED_UP_CARDS_ON_TABLE
         
         # Validate that all cards played have the same rank
-        first_card_rank = list(action_request.cards_played[0].keys())[0].rank
-        if not all(list(card.keys())[0].rank == first_card_rank for card in action_request.cards_played):
+        first_card_rank = action_request.cards_played[0].card.rank
+        if not all(play.card.rank == first_card_rank for play in action_request.cards_played):
             raise IllegalMoveException("All cards played in a single turn must have the same rank.")
 
         # Validate that the rank played is legal
-        if first_card_rank > top_live_rank:
-            # Player must pick up the pile
-            player_stack.cards_in_hand.extend(self.game_state.live_cards)
-            self.game_state.live_cards = []
-            return TurnOutcome.PICKED_UP_CARDS_ON_TABLE
+        # Swoop cards (10 and jack) are always legal to play
+        if first_card_rank > top_live_rank and (first_card_rank != 10 and first_card_rank != 11):
+            raise IllegalMoveException("Card played has higher rank than top of live cards.")
 
         # The move is legal, so remove the cards from the player's stack
-        for card_dict in action_request.cards_played:
-            card_played = list(card_dict.keys())[0]
-            played_from = list(card_dict.values())[0]
+        for play in action_request.cards_played:
+            card_played = play.card
+            played_from = play.played_from
 
             if played_from == PlayedFrom.CARDS_IN_HAND:
-            player_stack.cards_in_hand.remove(card_played)
+                player_stack.cards_in_hand.remove(card_played)
             elif played_from == PlayedFrom.RIGHTSIDE_UP_TABLE_CARD:
-            for i, table_card_pair in enumerate(player_stack.table_cards):
-                if table_card_pair.get("face_up_card") == card_played:
-                player_stack.table_cards[i]["face_up_card"] = None
-                break
+                for i, table_card_pair in enumerate(player_stack.table_cards):
+                    if table_card_pair.face_up_card == card_played:
+                        player_stack.table_cards[i].face_up_card = None
+                        break
             elif played_from == PlayedFrom.UPSIDE_DOWN_TABLE_CARD:
              for i, table_card_pair in enumerate(player_stack.table_cards):
-                if table_card_pair.get("face_down_card") == card_played:
-                player_stack.table_cards[i]["face_down_card"] = None
-                break
+                if table_card_pair.face_down_card == card_played:
+                    player_stack.table_cards[i].face_down_card = None
+                    break
+        
+        swoop_check = is_swoop(first_card_rank, len(action_request.cards_played), self.game_state.live_cards)
         
         # Add played cards to the live_cards pile
-        played_cards = [list(card.keys())[0] for card in action_request.cards_played]
+        played_cards = [play.card for play in action_request.cards_played]
         self.game_state.live_cards.extend(played_cards)
 
         # Check for victory condition
         if (
             len(player_stack.cards_in_hand) == 0 and
-            all(card_pair.get("face_up_card") is None for card_pair in player_stack.table_cards) and
-            all(card_pair.get("face_down_card") is None for card_pair in player_stack.table_cards)
+            all(card_pair.face_up_card is None for card_pair in player_stack.table_cards) and
+            all(card_pair.face_down_card is None for card_pair in player_stack.table_cards)
         ):
             return TurnOutcome.VICTORY
+        elif swoop_check:
+            self.game_state.live_cards = []
+            return TurnOutcome.SWOOP
 
         return TurnOutcome.REGULAR_TURN
     
     async def broadcast_all(self, message: str):
+        # These next two lines exist primarily to facilitate unit testing in mockless setups
+        if len(self.players) == 0: return
+        if (all(player is None for player in self.players)): return
         for player in self.players:
             await player.send_text(message)
 
