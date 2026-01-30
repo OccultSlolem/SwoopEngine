@@ -2,14 +2,6 @@ import unittest
 from ai_bridge.main import Game, PlayedFrom, TurnOutcome, initialize_card_deck, Card, CardSuit, TurnActionRequest, IllegalMoveException, GameNotStartedException, CardPlay, TableCardPair
 import asyncio
 
-"""
-IMPORTANT NOTE:
-
-Some tests might fail due to pure chance. For instance, test_illegal_move_card_not_in_hand
-uses an ace of spades as a test card, but the player may have it by pure chance. If the tests
-fail, try running them up to five times.
-"""
-
 def add(a: int, b: int):
     return a+b
 
@@ -23,10 +15,8 @@ class TestCardsFunctionality(unittest.TestCase):
         table = initialize_card_deck(4)
         table_deck = table["table_deck"]
         player_card_stacks = table["player_card_stacks"]
-        # Make sure the first four cards are not all exactly equal
-        # Technically this could happen by pure chance as we use four card decks,
-        # but the possibility is astronomically small. If this fails, try running it again.
-        self.assertFalse(all(card == table_deck[0] for card in table_deck[1:4]))
+        # Make sure the first eighteen cards are not all exactly equal
+        self.assertFalse(all(card == table_deck[0] for card in table_deck[1:18]))
         self.assertEqual(len(player_card_stacks), 4)
         face_up_cards = []
         face_down_cards = []
@@ -37,27 +27,31 @@ class TestCardsFunctionality(unittest.TestCase):
             self.assertTrue(hasattr(stack, "table_cards"))
             table_cards_list = stack.table_cards
             self.assertEqual(len(table_cards_list), 4)
+            identical_pairs = 0
             for table_cards in table_cards_list:
                 self.assertIsNotNone(table_cards.face_up_card)
                 self.assertIsNotNone(table_cards.face_down_card)
-                self.assertNotEqual(table_cards.face_up_card, table_cards.face_down_card)
+                # self.assertNotEqual(table_cards.face_up_card, table_cards.face_down_card)
+
+                if (table_cards.face_up_card == table_cards.face_down_card): identical_pairs += 1
                 face_up_cards.append(table_cards.face_up_card)
                 face_down_cards.append(table_cards.face_down_card)
-        
+
+        self.assertLess(identical_pairs, len(player_card_stacks) * 4, "All table card pairs were identical, which is highly improbable and likely indicates a bug.")
         self.assertFalse(all(card == face_up_cards[0] for card in face_up_cards[1:4]))
         self.assertFalse(all(card == face_down_cards[0] for card in face_down_cards[1:4]))
 
 class TestGameTurnProcessing(unittest.TestCase):
     def setUp(self):
         """Set up a game instance before each test."""
-        self.game = Game(playing_to=100)
+        self.game = Game(playing_to=100, max_players=2)
         # Mock websockets
         self.game.players = [None, None] # Two players
         asyncio.run(self.game.start_game())
 
     def test_process_turn_game_not_started(self):
         """Test that an exception is raised if a turn is processed before the game starts."""
-        game = Game(playing_to=100)
+        game = Game(playing_to=100, max_players=6)
         action = TurnActionRequest(cards_played=[])
         with self.assertRaises(GameNotStartedException):
             game.process_turn(0, action)
@@ -81,10 +75,21 @@ class TestGameTurnProcessing(unittest.TestCase):
         self.assertEqual(player_hand_after, player_hand_before + 1)
 
     def test_illegal_move_card_not_in_hand(self):
-        """Test that an exception is raised if a player tries to play a card they don't have.
-        Note that this test assumes the player doesn't have an ace of spades - it may fail
-        due to pure chance. Try running it a few times."""
-        card_not_in_hand = Card(suit=CardSuit.SPADES, rank=1) # Assume this card is not in hand
+        card_not_in_hand = Card(suit=CardSuit.SPADES, rank=1)
+        # Find a card that is not in the player's hand
+        player_hand = self.game.game_state.player_card_stacks[0].cards_in_hand
+        all_ranks = range(1, 14)
+        all_suits = [CardSuit.HEARTS, CardSuit.DIAMONDS, CardSuit.CLUBS, CardSuit.SPADES]
+
+        for rank in all_ranks:
+            for suit in all_suits:
+                potential_card = Card(suit=suit, rank=rank)
+                if potential_card not in player_hand:
+                    card_not_in_hand = potential_card
+                    break
+                if 'card_not_in_hand' in locals():
+                    break
+
         action = TurnActionRequest(cards_played=[CardPlay(card=card_not_in_hand, played_from=PlayedFrom.CARDS_IN_HAND)])
         with self.assertRaises(IllegalMoveException):
             self.game.process_turn(0, action)
@@ -93,7 +98,8 @@ class TestGameTurnProcessing(unittest.TestCase):
         """Test a regular, legal turn."""
         # Give player 0 a specific card to play
         card_to_play = Card(suit=CardSuit.DIAMONDS, rank=3)
-        self.game.game_state.player_card_stacks[0].cards_in_hand.append(card_to_play)
+        card_not_to_play = Card(suit=CardSuit.CLUBS, rank=8)
+        self.game.game_state.player_card_stacks[0].cards_in_hand = [card_to_play, card_not_to_play]
         
         # Set up the game state for a legal move
         self.game.game_state.live_cards = [Card(suit=CardSuit.HEARTS, rank=5)]

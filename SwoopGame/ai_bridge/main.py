@@ -58,6 +58,7 @@ class GameState(BaseModel):
     player_points: List[int] # The number of points each player has. Like golf, fewer is better.
     playing_to: int # Once any one player reaches this many points, the game ends.
     player_turn: int
+    max_players: int
     turn_actions: List[TurnActionLog]
     game_active: bool
 
@@ -152,13 +153,14 @@ class BadArgumentException(Exception):
 
 class Game:
     """Represents a single game instance"""
-    def __init__(self, playing_to: int):
+    def __init__(self, playing_to: int, max_players: int):
         self.game_state = GameState(
             table_deck=[],
             live_cards=[],
             player_card_stacks=[],
             player_points=[],
             player_turn=0,
+            max_players=max_players,
             playing_to=playing_to,
             turn_actions=[],
             game_active=False
@@ -301,17 +303,47 @@ class GameManager:
     """Singleton class that manages all active game sessions"""
     def __init__(self):
         # The str represents a unique game ID
-        self.active_games: Dict["game_id": str, "game_state": Game] = {}
+        self.active_games: Dict[str, Game] = {}
     
-    def create_game(self):
+    def create_game(self, playing_to: int, max_players: int):
         game_id = uuid4()
-        game_state = Game()
+        game_state = Game(playing_to, max_players)
         self.active_games["game_id": game_id, "game_state": game_state]
         return game_id
+    
+    def join_game_by_id(self, player: WebSocket, game_id: str):
+        if game_id not in self.active_games:
+            raise BadArgumentException(f"Game with ID {game_id} not found.")
+
+        game = self.active_games[game_id]
+        # Check if there is room for the additional player
+        num_players = len(game.players)
+        if num_players + 1 > game.game_state.max_players:
+            raise BadArgumentException("Game is full")
+        game.add_player(player)
+    
+    def join_any_game(self, player: WebSocket):
+        # If there are no active games, create a new game
+        if len(self.active_games) == 0:
+            return self.create_game()
+        
+        # Join any game that has capacity
+        for game in self.active_games:
+            num_players = len(self.active_games[game].players)
+            max_players = self.active_games[game].game_state.max_players
+            if num_players + 1 > max_players: continue
+            self.active_games[game].add_player(player)
+            return game
+
+        # If all games are at capacity, create a new game
+        return self.create_game()
+
+
 
 # --- FastAPI Application
 
 app = FastAPI()
+game_manager = GameManager()
 
 @app.get("/")
 def read_root():
@@ -321,5 +353,47 @@ def read_root():
 async def websocket(websocket: WebSocket):
     await websocket.accept()
     while True:
-        data = await websocket.receive_text()
-        await websocket.send_text(data)
+        data = await websocket.receive_json()
+        try:
+            sort_message(data)
+        except:
+            # FIXME Clearer error messages
+            await websocket.send_json({ "status": 400, "message": "Error" })
+
+def sort_message(message):
+    """
+    Takes a WebSocket message and "sorts" it to the relevant processing function.
+    Structuring it this way reduces indentation.
+    """
+    try:
+        message.type
+    except:
+        raise BadArgumentException("No message type found!")
+    
+    match message.type:
+        case "CREATE_GAME":
+            playing_to = 300
+            max_players = 6
+            if hasattr(message, 'payload'):
+                if hasattr(message.payload, 'playing_to'):
+                    playing_to = message.payload.playing_to
+                if hasattr(message.payload, 'max_players'):
+                    max_players = message.payload.max_players
+            
+            game_id = game_manager.create_game(playing_to, max_players)
+            return game_id
+        
+        case "JOIN_GAME_BY_ID":
+            try:
+                message.payload.game_id
+            except:
+                raise BadArgumentException("No game ID in payload")
+            
+            game_manager.join_game_by_id(message.payload.game_id)
+
+        case "JOIN_ANY_GAME":
+            return game_manager.join_any_game(websocket)
+        
+        case _:
+            raise BadArgumentException(F"Unknown message type: {message.type}")
+
