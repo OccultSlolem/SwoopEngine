@@ -43,7 +43,7 @@ class TestCardsFunctionality(unittest.TestCase):
                 face_up_cards.append(table_cards.face_up_card)
                 face_down_cards.append(table_cards.face_down_card)
 
-        self.assertLess(identical_pairs, len(player_card_stacks) * 4, "All table card pairs were identical, which is highly improbable and likely indicates a bug.")
+        self.assertLess(identical_pairs, len(player_card_stacks) * 4, "All table card pairs were identical, which is highly improbable and likely indicates a bug.") # type: ignore
         self.assertFalse(all(card == face_up_cards[0] for card in face_up_cards[1:4]))
         self.assertFalse(all(card == face_down_cards[0] for card in face_down_cards[1:4]))
 
@@ -53,7 +53,7 @@ class TestGameTurnProcessing(unittest.TestCase):
         game_id = str(uuid4())
         self.game = Game(playing_to=100, max_players=2, game_id=game_id)
         # Mock websockets
-        self.game.players = [None, None] # Two players
+        self.game.players = [None, None] # type: ignore # Two players
         asyncio.run(self.game.start_game())
 
     def test_process_turn_game_not_started(self):
@@ -159,6 +159,7 @@ class TestSortMessage(unittest.TestCase):
     def setUp(self):
         self.game_manager = GameManager()
         self.mock_websocket = Mock()
+
 
     def test_sort_message_no_type(self):
         """Test that an exception is raised if the message has no type."""

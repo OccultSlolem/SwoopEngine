@@ -1,15 +1,16 @@
 from typing import Optional, List, Dict
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from uuid import uuid4
 from enum import Enum
 from random import shuffle
 from math import inf
-import json
+import logging
 import os
 
-# --- Swoop logic
+log = logging.getLogger(__name__)
 
+# --- Swoop logic
 class CardSuit(str, Enum):
     DIAMONDS = 'diamonds'
     CLUBS = 'clubs'
@@ -169,11 +170,14 @@ class Game:
             turn_actions=[],
             game_active=False
         )
+        log.info(f"GAME CREATED: {game_id}")
     
     def add_player(self, websocket: WebSocket):
+        log.info(f"Player added to game {self.game_id}: {websocket.client.host}:{websocket.client.port}") # type: ignore
         self.players.append(websocket)
     
     def remove_player(self, websocket: WebSocket):
+        log.info(f"Player removed from game {self.game_id}: {websocket.client.host}:{websocket.client.port}") # type: ignore
         self.players.remove(websocket)
     
     async def start_game(self):
@@ -186,6 +190,7 @@ class Game:
         self.game_state.player_card_stacks = deck["player_card_stacks"]
         self.game_state.table_deck = deck["table_deck"]
         self.game_state.game_active = True
+        log.info(f"GAME STARTED: {self.game_id}")
         await self.broadcast_all(self.game_state.model_dump_json())
     
     def process_turn(self, player: int, action_request: TurnActionRequest) -> TurnOutcome:
@@ -326,7 +331,7 @@ class GameManager:
         game_id = str(uuid4())
         game_state = Game(playing_to, max_players, game_id)
         game_state.add_player(host)
-        self.active_games["game_id": game_id, "game_state": game_state]
+        self.active_games[game_id] = game_state
         return game_id
     
     def join_game_by_id(self, player: WebSocket, game_id: str):
@@ -343,7 +348,7 @@ class GameManager:
     def join_any_game(self, player: WebSocket):
         # If there are no active games, create a new game
         if len(self.active_games) == 0:
-            return self.create_game()
+            return self.create_game(playing_to=300, max_players=6, host=player)
         
         # Join any game that has capacity
         for game in self.active_games:
@@ -354,7 +359,7 @@ class GameManager:
             return game
 
         # If all games are at capacity, create a new game
-        return self.create_game()
+        return self.create_game(playing_to=300, max_players=6, host=player)
 
 
 
@@ -370,13 +375,18 @@ def read_root():
 @app.websocket("/ws")
 async def websocket(websocket: WebSocket):
     await websocket.accept()
-    while True:
-        data = await websocket.receive_json()
-        try:
-            sort_message(data, websocket, game_manager)
-        except:
-            # FIXME Clearer error messages
-            await websocket.send_json({ "status": 400, "message": "Error" })
+    try:
+        while True:
+            data = await websocket.receive_json()
+            try:
+                return_value = sort_message(data, websocket, game_manager)
+                await websocket.send_json({ "status": 200, "message" : return_value })
+            except:
+                # FIXME Clearer error messages
+                await websocket.send_json({ "status": 400, "message": "Error" })
+    except WebSocketDisconnect:
+        log.info(f"Client disconnected: {websocket.client.host}:{websocket.client.port}") # type: ignore
+        #TODO: Cleanup logic, especially if a client disconnects mid-game.
 
 def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager):
     """
@@ -390,6 +400,9 @@ def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager)
     payload_data = message.get("payload", {})
     
     match message_type:
+        case "TEST_CONNECTION":
+            return payload_data.get("test_message")
+
         case "CREATE_GAME":
             playing_to = payload_data.get('playing_to', 300)
             max_players = payload_data.get('max_players', 6)
