@@ -5,6 +5,8 @@ from uuid import uuid4
 from enum import Enum
 from random import shuffle
 from math import inf
+import json
+import os
 
 # --- Swoop logic
 
@@ -153,7 +155,9 @@ class BadArgumentException(Exception):
 
 class Game:
     """Represents a single game instance"""
-    def __init__(self, playing_to: int, max_players: int):
+    def __init__(self, playing_to: int, max_players: int, game_id: str):
+        self.game_id = game_id
+        self.players: List[WebSocket] = []
         self.game_state = GameState(
             table_deck=[],
             live_cards=[],
@@ -165,7 +169,6 @@ class Game:
             turn_actions=[],
             game_active=False
         )
-        self.players: List[WebSocket] = []
     
     def add_player(self, websocket: WebSocket):
         self.players.append(websocket)
@@ -285,6 +288,7 @@ class Game:
             all(card_pair.face_up_card is None for card_pair in player_stack.table_cards) and
             all(card_pair.face_down_card is None for card_pair in player_stack.table_cards)
         ):
+            self.save_game_to_disk() # Save game on victory
             return TurnOutcome.VICTORY
         elif swoop_check:
             self.game_state.live_cards = []
@@ -298,6 +302,19 @@ class Game:
         if (all(player is None for player in self.players)): return
         for player in self.players:
             await player.send_text(message)
+    
+    def save_game_to_disk(self):
+        """Saves the final game state and turn history to a JSON file"""
+        # Create a directory to store the game logs if it doesn't exist.
+        LOG_DIR = "game_logs"
+        if not os.path.exists(LOG_DIR):
+            os.makedirs(LOG_DIR)
+
+        file_path = os.path.join(LOG_DIR, f"{self.game_id}")
+        with open(file_path, "w") as f:
+            f.write(self.game_state.model_dump_json(indent=2))
+        print(f"Game {self.game_id} saved to {file_path}")
+
 
 class GameManager:
     """Singleton class that manages all active game sessions"""
@@ -305,9 +322,10 @@ class GameManager:
         # The str represents a unique game ID
         self.active_games: Dict[str, Game] = {}
     
-    def create_game(self, playing_to: int, max_players: int):
-        game_id = uuid4()
-        game_state = Game(playing_to, max_players)
+    def create_game(self, playing_to: int, max_players: int, host: WebSocket):
+        game_id = str(uuid4())
+        game_state = Game(playing_to, max_players, game_id)
+        game_state.add_player(host)
         self.active_games["game_id": game_id, "game_state": game_state]
         return game_id
     
@@ -355,45 +373,40 @@ async def websocket(websocket: WebSocket):
     while True:
         data = await websocket.receive_json()
         try:
-            sort_message(data)
+            sort_message(data, websocket, game_manager)
         except:
             # FIXME Clearer error messages
             await websocket.send_json({ "status": 400, "message": "Error" })
 
-def sort_message(message):
+def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager):
     """
     Takes a WebSocket message and "sorts" it to the relevant processing function.
     Structuring it this way reduces indentation.
     """
-    try:
-        message.type
-    except:
+    message_type = message.get("type")
+    if not message_type:
         raise BadArgumentException("No message type found!")
     
-    match message.type:
+    payload_data = message.get("payload", {})
+    
+    match message_type:
         case "CREATE_GAME":
-            playing_to = 300
-            max_players = 6
-            if hasattr(message, 'payload'):
-                if hasattr(message.payload, 'playing_to'):
-                    playing_to = message.payload.playing_to
-                if hasattr(message.payload, 'max_players'):
-                    max_players = message.payload.max_players
+            playing_to = payload_data.get('playing_to', 300)
+            max_players = payload_data.get('max_players', 6)
             
-            game_id = game_manager.create_game(playing_to, max_players)
+            game_id = game_manager.create_game(playing_to, max_players, host=websocket)
             return game_id
         
         case "JOIN_GAME_BY_ID":
-            try:
-                message.payload.game_id
-            except:
+            game_id = payload_data.get('game_id')
+            if not game_id:
                 raise BadArgumentException("No game ID in payload")
             
-            game_manager.join_game_by_id(message.payload.game_id)
+            game_manager.join_game_by_id(websocket, game_id)
 
         case "JOIN_ANY_GAME":
             return game_manager.join_any_game(websocket)
         
         case _:
-            raise BadArgumentException(F"Unknown message type: {message.type}")
+            raise BadArgumentException(F"Unknown message type: {message_type}")
 

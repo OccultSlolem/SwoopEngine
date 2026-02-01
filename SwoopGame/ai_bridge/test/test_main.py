@@ -1,6 +1,12 @@
 import unittest
-from ai_bridge.main import Game, PlayedFrom, TurnOutcome, initialize_card_deck, Card, CardSuit, TurnActionRequest, IllegalMoveException, GameNotStartedException, CardPlay, TableCardPair
+from unittest.mock import Mock, patch
+from ai_bridge.main import (
+    Game, PlayedFrom, TurnOutcome, initialize_card_deck, Card, CardSuit, 
+    TurnActionRequest, IllegalMoveException, GameNotStartedException, 
+    CardPlay, sort_message, BadArgumentException, GameManager
+)
 import asyncio
+from uuid import uuid4
 
 def add(a: int, b: int):
     return a+b
@@ -44,14 +50,16 @@ class TestCardsFunctionality(unittest.TestCase):
 class TestGameTurnProcessing(unittest.TestCase):
     def setUp(self):
         """Set up a game instance before each test."""
-        self.game = Game(playing_to=100, max_players=2)
+        game_id = str(uuid4())
+        self.game = Game(playing_to=100, max_players=2, game_id=game_id)
         # Mock websockets
         self.game.players = [None, None] # Two players
         asyncio.run(self.game.start_game())
 
     def test_process_turn_game_not_started(self):
         """Test that an exception is raised if a turn is processed before the game starts."""
-        game = Game(playing_to=100, max_players=6)
+        game_id = str(uuid4())
+        game = Game(playing_to=100, max_players=6, game_id=game_id)
         action = TurnActionRequest(cards_played=[])
         with self.assertRaises(GameNotStartedException):
             game.process_turn(0, action)
@@ -139,3 +147,62 @@ class TestGameTurnProcessing(unittest.TestCase):
         outcome = self.game.process_turn(0, action)
         
         self.assertEqual(outcome, TurnOutcome.VICTORY)
+
+class MockMessage:
+    def __init__(self, type, payload=None):
+        self.type = type
+        if payload:
+            self.payload = Mock(**payload)
+
+
+class TestSortMessage(unittest.TestCase):
+    def setUp(self):
+        self.game_manager = GameManager()
+        self.mock_websocket = Mock()
+
+    def test_sort_message_no_type(self):
+        """Test that an exception is raised if the message has no type."""
+        message = {} # A dict, which has no 'type' attribute
+        with self.assertRaises(BadArgumentException):
+            sort_message(message, self.mock_websocket, self.game_manager)
+
+    def test_sort_message_unknown_type(self):
+        """Test that an exception is raised for an unknown message type."""
+        message = {"type": "UNKNOWN_TYPE"}
+        with self.assertRaises(BadArgumentException):
+            sort_message(message, self.mock_websocket, self.game_manager)
+
+    @patch('ai_bridge.main.GameManager.create_game')
+    def test_create_game_default(self, mock_create_game):
+        """Test creating a game with default parameters."""
+        message = {"type": "CREATE_GAME"}
+        sort_message(message, self.mock_websocket, self.game_manager)
+        mock_create_game.assert_called_once_with(300, 6, host=self.mock_websocket)
+
+    @patch('ai_bridge.main.GameManager.create_game')
+    def test_create_game_with_payload(self, mock_create_game):
+        """Test creating a game with custom parameters."""
+        message = {"type": "CREATE_GAME", "payload": {'playing_to': 200, 'max_players': 4}}
+        sort_message(message, self.mock_websocket, self.game_manager)
+        mock_create_game.assert_called_once_with(200, 4, host=self.mock_websocket)
+
+    def test_join_game_by_id_no_id(self):
+        """Test joining a game by ID when no ID is provided."""
+        message = {"type": "JOIN_GAME_BY_ID", "payload": {}}
+        with self.assertRaises(BadArgumentException):
+            sort_message(message, self.mock_websocket, self.game_manager)
+
+    @patch('ai_bridge.main.GameManager.join_game_by_id')
+    def test_join_game_by_id(self, mock_join_game):
+        """Test joining a game by a specific ID."""
+        game_id = "test_game_id"
+        message = {"type": "JOIN_GAME_BY_ID", "payload": {'game_id': game_id}}
+        sort_message(message, self.mock_websocket, self.game_manager)
+        mock_join_game.assert_called_once_with(self.mock_websocket, game_id)
+
+    @patch('ai_bridge.main.GameManager.join_any_game')
+    def test_join_any_game(self, mock_join_any_game):
+        """Test joining any available game."""
+        message = {"type": "JOIN_ANY_GAME"}
+        sort_message(message, self.mock_websocket, self.game_manager)
+        mock_join_any_game.assert_called_once_with(self.mock_websocket)
