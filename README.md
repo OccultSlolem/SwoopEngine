@@ -20,7 +20,7 @@ One step at a time though 😅
 *Note: there are a few different ways people play Swoop. This is the way my family does 
 it.*
 
-**Swoop** is a card game where players compete to collect the most points by playing
+**Swoop** is a card game where players compete to minimize points by playing all the
 cards from their hands. Like Uno, you win a round by being the first to play all your
 cards. At the end of each round, players score points based on how many cards they had
 left - like golf, fewer points is better. The game continues until a player reaches a set
@@ -43,17 +43,16 @@ revealed that you have another card of the same rank, you can't then play those 
 
 ### Trump cards
 
-You can clear all the cards on the table by playing a *trump card*, accomplished by
-playing a ten, jack, or four cards of the same rank. That last one can include cards from
-previous players - for instance, if the one player put down two kings, the next one put
-down another king, the one following could swoop by placing a fourth king. Doing this
-grants the player an extra turn where they can play whatever they want.
+Certain cards and plays act as "trump cards," which clear the pile of played cards from the table. Playing a trump card also grants the player an extra turn, where they can start a new pile with any card they choose.
 
-If a player does not have any cards available to play, they must pick up all cards on
-the table that have been played since the previous trump card. Once the table is played
-down to an ace, the following players must either continue to play aces, play a trump
-card, or pick up the deck if they don't have anything to play. The round ends when
-**one** player has gotten all the cards out their deck.
+The following are considered trump cards/plays:
+- Any **ten**
+- Any **jack**
+- Completing a set of **four cards of the same rank**. This is cumulative across turns. For example, if one player plays two kings and the next player plays another king, the following player can play the fourth king to clear the pile. This is called a "swoop."
+
+If a player cannot play a valid card (lower than or equal to the previous card), they must pick up the entire pile of played cards.
+
+Once the pile is played down to an ace, subsequent players must either play an ace, a trump card, or pick up the pile.
 
 ### Scoring
 
@@ -65,4 +64,7 @@ from their hand, the others are scored like so:
 - **Twenty-five points** for trump cards (tens and jacks)
 
 You really want to get rid of all your trump cards before the round ends!
+
+The game continues until one player reaches the threshold, which is typically set at
+100-200 points. The player with the lowest score at that time wins the game.
 

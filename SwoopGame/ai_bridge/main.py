@@ -315,7 +315,7 @@ class Game:
         if not os.path.exists(LOG_DIR):
             os.makedirs(LOG_DIR)
 
-        file_path = os.path.join(LOG_DIR, f"{self.game_id}")
+        file_path = os.path.join(LOG_DIR, f"game-{self.game_id[0:8]}-log.json")
         with open(file_path, "w") as f:
             f.write(self.game_state.model_dump_json(indent=2))
         print(f"Game {self.game_id} saved to {file_path}")
@@ -380,35 +380,38 @@ async def websocket(websocket: WebSocket):
             data = await websocket.receive_json()
             try:
                 return_value = sort_message(data, websocket, game_manager)
-                await websocket.send_json({ "status": 200, "message" : return_value })
+                await websocket.send_json(return_value)
             except:
-                # FIXME Clearer error messages
-                await websocket.send_json({ "status": 400, "message": "Error" })
+                await websocket.send_json({ "status": 500, "message": "Error" })
     except WebSocketDisconnect:
         log.info(f"Client disconnected: {websocket.client.host}:{websocket.client.port}") # type: ignore
         #TODO: Cleanup logic, especially if a client disconnects mid-game.
 
-def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager):
+class MessageStatus(BaseModel):
+    status: int
+    message: str
+
+def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager) -> MessageStatus:
     """
     Takes a WebSocket message and "sorts" it to the relevant processing function.
     Structuring it this way reduces indentation.
     """
     message_type = message.get("type")
     if not message_type:
-        raise BadArgumentException("No message type found!")
+        return MessageStatus(status=400, message="No message type specified")
     
     payload_data = message.get("payload", {})
     
     match message_type:
         case "TEST_CONNECTION":
-            return payload_data.get("test_message")
+            return MessageStatus( status=200, message=payload_data.get("test_message", "Connection successful"))
 
         case "CREATE_GAME":
             playing_to = payload_data.get('playing_to', 300)
             max_players = payload_data.get('max_players', 6)
             
             game_id = game_manager.create_game(playing_to, max_players, host=websocket)
-            return game_id
+            return MessageStatus(status=200, message=game_id)
         
         case "JOIN_GAME_BY_ID":
             game_id = payload_data.get('game_id')
@@ -416,10 +419,40 @@ def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager)
                 raise BadArgumentException("No game ID in payload")
             
             game_manager.join_game_by_id(websocket, game_id)
+            return MessageStatus(status=200, message="Success")
 
         case "JOIN_ANY_GAME":
-            return game_manager.join_any_game(websocket)
+            game_id = game_manager.join_any_game(websocket)
+            return MessageStatus(status=200, message=game_id)
+        
+        case "PROCESS_TURN":
+            cards_played = payload_data.get("cards_played")
+            game_id = payload_data.get("game_id")
+            if cards_played is None:
+                return MessageStatus(status=400, message="No cards_played in payload")
+            
+            if game_id is None:
+                return MessageStatus(status=400, message="No game ID specified")
+            
+            if game_id not in game_manager.active_games:
+                return MessageStatus(status=400, message="Game does not exist or is not active")
+            
+            game = game_manager.active_games[game_id]
+            player_number = game.players.index(websocket)
+            if player_number < 0:
+                return MessageStatus(status=400, message="You are not in this game")
+            
+            try:
+                action_request = TurnActionRequest(cards_played=cards_played)
+            except Exception as e:
+                return MessageStatus(status=400, message=f"Invalid cards_played format: {e}")
+            
+            try:
+                outcome = game.process_turn(player_number, action_request)
+                return MessageStatus(status=200, message=f"Turn processed with outcome: {outcome.value}")
+            except Exception as e:
+                log.error(e)
+                return MessageStatus(status=500, message="Failed to process turn")
         
         case _:
-            raise BadArgumentException(F"Unknown message type: {message_type}")
-
+            return MessageStatus(status=400, message=F"Unknown message type: {message_type}")

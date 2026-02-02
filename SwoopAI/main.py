@@ -63,19 +63,30 @@ async def connection_tick(connection: websockets.ClientConnection):
             if not game_id:
                 log.critical("Failed to join/create game! Check ai_bridge logs. Abort.")
                 os._exit(1)
-                return
             current_game_id = game_id
             log.info(f"Joined game {game_id}")
+            log.info("Waiting for the game to start 😴")
             current_game_status = GameStatus.AWAITING_GAME_START
+        
+        case GameStatus.AWAITING_TURN:
+            log.debug("Waiting for my turn 😴")
+        case GameStatus.AWAITING_GAME_START:
+            log.debug("Waiting for the game to start 😴")
 
+        case GameStatus.MY_TURN:
+            pass # TODO
 
         case GameStatus.COMPLETE:
             rematch = input("Would you like to do another round? (Y/n) ").casefold() == "y"
             if not rematch:
                 log.info("Goodbye!")
                 os._exit(0)
-                return
             current_game_status = GameStatus.IDLE
+
+        case GameStatus.ERROR:
+            log.critical("Otherworldly forces have thrown the match. Abort.")
+            log.info("Hint: If you don't see any useful console output here, try checking ai_bridge logs.")
+            os._exit(1)
 
 async def connection_loop(connection: websockets.ClientConnection):
     # Do something based on current_game_status
@@ -92,7 +103,11 @@ async def connection_loop(connection: websockets.ClientConnection):
 
     while True:
         log.debug(f"Current game status: {current_game_status}")
-        await connection_tick(connection)
+        try:
+            await connection_tick(connection)
+        except Exception as e:
+            log.error(e)
+            current_game_status = GameStatus.ERROR
         await asyncio.sleep(LOOP_DELAY / 1000) # asyncio defaults to seconds, so convert to ms
     
 
