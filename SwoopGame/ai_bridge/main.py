@@ -5,6 +5,8 @@ from uuid import uuid4
 from enum import Enum
 from random import shuffle
 from math import inf
+import asyncio
+import json
 import logging
 import os
 
@@ -64,6 +66,15 @@ class GameState(BaseModel):
     max_players: int
     turn_actions: List[TurnActionLog]
     game_active: bool
+class SystemMessageType(str, Enum):
+    GAME_STATUS = 'GAME_STATUS'
+    GAME_STARTING = 'GAME_STARTING'
+    ROUND_COMPLETE = 'ROUND_COMPLETE'
+    GAME_COMPLETE = 'GAME_COMPLETE'
+
+class SystemMessage(BaseModel):
+    message_type: SystemMessageType
+    message: str
 
 
 def initialize_card_deck(num_players: int):
@@ -148,6 +159,9 @@ class IncorrectPlayerAmountException(Exception):
 class GameNotStartedException(Exception):
     pass
 
+class GameAlreadyStartedException(Exception):
+    pass
+
 class IllegalMoveException(Exception):
     pass
 
@@ -171,14 +185,21 @@ class Game:
             game_active=False
         )
         log.info(f"GAME CREATED: {game_id}")
+            
     
     def add_player(self, websocket: WebSocket):
+        if (self.game_state.game_active):
+            raise GameAlreadyStartedException("This game has already started, can't add new players")
         log.info(f"Player added to game {self.game_id}: {websocket.client.host}:{websocket.client.port}") # type: ignore
         self.players.append(websocket)
+        asyncio.run(self.broadcast_game_state())
     
     def remove_player(self, websocket: WebSocket):
+        if websocket not in self.players:
+            raise BadArgumentException("Player not in game")
         log.info(f"Player removed from game {self.game_id}: {websocket.client.host}:{websocket.client.port}") # type: ignore
         self.players.remove(websocket)
+        asyncio.run(self.broadcast_game_state())
     
     async def start_game(self):
         num_players = len(self.players)
@@ -191,7 +212,7 @@ class Game:
         self.game_state.table_deck = deck["table_deck"]
         self.game_state.game_active = True
         log.info(f"GAME STARTED: {self.game_id}")
-        await self.broadcast_all(self.game_state.model_dump_json())
+        await self.broadcast_game_state()
     
     def process_turn(self, player: int, action_request: TurnActionRequest) -> TurnOutcome:
         # 1. Parse what the player did
@@ -293,7 +314,7 @@ class Game:
             all(card_pair.face_up_card is None for card_pair in player_stack.table_cards) and
             all(card_pair.face_down_card is None for card_pair in player_stack.table_cards)
         ):
-            self.save_game_to_disk() # Save game on victory
+            asyncio.run(self.process_round_completion())
             return TurnOutcome.VICTORY
         elif swoop_check:
             self.game_state.live_cards = []
@@ -301,12 +322,47 @@ class Game:
 
         return TurnOutcome.REGULAR_TURN
     
-    async def broadcast_all(self, message: str):
+    async def broadcast_all(self, message: SystemMessage):
         # These next two lines exist primarily to facilitate unit testing in mockless setups
         if len(self.players) == 0: return
         if (all(player is None for player in self.players)): return
         for player in self.players:
-            await player.send_text(message)
+            await player.send_json(message.model_dump_json())
+    
+    async def broadcast_game_state(self):
+        message = SystemMessage(message_type=SystemMessageType.GAME_STATUS, message=self.game_state.model_dump_json())
+        await self.broadcast_all(message)
+
+    async def process_round_completion(self):
+        # Assign points based on how many cards people have left
+        # Number cards are worth 5 points, face cards are worth 10, trump cards (10/jack) are worth 25
+        # End the game if any player has a point value >= self.game_state.playing_to
+        def point_value_of_card(card: Card) -> int:
+            if card.rank < 10: return 5
+            if card.rank == 10 or card.rank == 11: return 25
+            if card.rank == 12 or card.rank == 13: return 10
+            raise Exception("Illegal card rank!")
+
+        for i in range(0, len(self.game_state.player_card_stacks)):
+            stack = self.game_state.player_card_stacks[i]
+            points_this_round = 0
+            for card in stack.cards_in_hand: points_this_round += point_value_of_card(card)
+            for pair in stack.table_cards:
+                if pair.face_up_card: points_this_round += point_value_of_card(pair.face_up_card)
+                if pair.face_down_card: points_this_round += point_value_of_card(pair.face_down_card)
+            
+            self.game_state.player_points[i] += points_this_round
+        
+        if any(points >= self.game_state.playing_to for points in self.game_state.player_points):
+            self.game_state.game_active = False
+            message = SystemMessage(message_type=SystemMessageType.GAME_COMPLETE, message="")
+            await self.broadcast_all(message)
+            for connection in self.players: await connection.close()
+            return
+
+        message = SystemMessage(message_type=SystemMessageType.ROUND_COMPLETE, message=self.game_state.model_dump_json())
+        await self.broadcast_all(message)
+
     
     def save_game_to_disk(self):
         """Saves the final game state and turn history to a JSON file"""
@@ -380,8 +436,9 @@ async def websocket(websocket: WebSocket):
             data = await websocket.receive_json()
             try:
                 return_value = sort_message(data, websocket, game_manager)
-                await websocket.send_json(return_value)
-            except:
+                await websocket.send_json(return_value.model_dump())
+            except Exception as e:
+                log.error("Error processing message", exc_info=e)
                 await websocket.send_json({ "status": 500, "message": "Error" })
     except WebSocketDisconnect:
         log.info(f"Client disconnected: {websocket.client.host}:{websocket.client.port}") # type: ignore

@@ -60,7 +60,7 @@ async def connection_tick(connection: websockets.ClientConnection):
             await connection.send(json.dumps(message))
             response = json.loads(await connection.recv())
             game_id = response.get("message")
-            if not game_id:
+            if not game_id or response["status"] != 200:
                 log.critical("Failed to join/create game! Check ai_bridge logs. Abort.")
                 os._exit(1)
             current_game_id = game_id
