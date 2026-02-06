@@ -1,10 +1,14 @@
 import unittest
 from unittest.mock import Mock, patch
 from ai_bridge.main import (
-    Game, PlayedFrom, TurnOutcome, initialize_card_deck, Card, CardSuit, 
-    TurnActionRequest, IllegalMoveException, GameNotStartedException, 
-    CardPlay, sort_message, BadArgumentException, GameManager
+    Game, initialize_card_deck, IllegalMoveException, GameNotStartedException,
+    sort_message, BadArgumentException, GameManager
 )
+
+from swooplib import (
+    PlayedFrom, TurnOutcome, Card, CardSuit, TurnActionRequest, CardPlay,
+)
+
 import asyncio
 from uuid import uuid4
 

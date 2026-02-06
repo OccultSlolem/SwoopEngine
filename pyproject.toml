@@ -1,0 +1,10 @@
+# This file defines a uv project which makes it easier to share dependencies between
+# the Python parts of this project (ie SwoopAI and AI bridge)
+
+[project]
+name = "swoopengine"
+version = "0.1.0"
+
+[tool.uv.workspace]
+members = ["SwoopLib", "SwoopAI", "SwoopGame/ai_bridge"]
+exclude = ["SwoopBot", "SwoopCam"]
