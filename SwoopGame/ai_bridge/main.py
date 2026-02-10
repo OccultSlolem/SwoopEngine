@@ -136,19 +136,19 @@ class Game:
         log.info(f"GAME CREATED: {game_id}")
             
     
-    def add_player(self, websocket: WebSocket):
+    async def add_player(self, websocket: WebSocket):
         if (self.game_state.game_active):
             raise GameAlreadyStartedException("This game has already started, can't add new players")
         log.info(f"Player added to game {self.game_id}: {websocket.client.host}:{websocket.client.port}") # type: ignore
         self.players.append(websocket)
-        asyncio.run(self.broadcast_game_state())
+        await self.broadcast_game_state()
     
-    def remove_player(self, websocket: WebSocket):
+    async def remove_player(self, websocket: WebSocket):
         if websocket not in self.players:
             raise BadArgumentException("Player not in game")
         log.info(f"Player removed from game {self.game_id}: {websocket.client.host}:{websocket.client.port}") # type: ignore
         self.players.remove(websocket)
-        asyncio.run(self.broadcast_game_state())
+        await self.broadcast_game_state()
     
     async def start_game(self):
         num_players = len(self.players)
@@ -160,6 +160,8 @@ class Game:
         self.game_state.player_card_stacks = deck["player_card_stacks"]
         self.game_state.table_deck = deck["table_deck"]
         self.game_state.game_active = True
+        for _ in range(num_players):
+            self.game_state.player_points.append(0)
         log.info(f"GAME STARTED: {self.game_id}")
         await self.broadcast_game_state()
     
@@ -306,7 +308,8 @@ class Game:
             self.game_state.game_active = False
             message = SystemMessage(message_type=SystemMessageType.GAME_COMPLETE, message="")
             await self.broadcast_all(message)
-            for connection in self.players: await connection.close()
+            for connection in self.players: 
+                if connection: await connection.close()
             return
 
         message = SystemMessage(message_type=SystemMessageType.ROUND_COMPLETE, message=self.game_state.model_dump_json())
@@ -332,14 +335,14 @@ class GameManager:
         # The str represents a unique game ID
         self.active_games: Dict[str, Game] = {}
     
-    def create_game(self, playing_to: int, max_players: int, host: WebSocket):
+    async def create_game(self, playing_to: int, max_players: int, host: WebSocket):
         game_id = str(uuid4())
         game_state = Game(playing_to, max_players, game_id)
-        game_state.add_player(host)
+        await game_state.add_player(host)
         self.active_games[game_id] = game_state
         return game_id
     
-    def join_game_by_id(self, player: WebSocket, game_id: str):
+    async def join_game_by_id(self, player: WebSocket, game_id: str):
         if game_id not in self.active_games:
             raise BadArgumentException(f"Game with ID {game_id} not found.")
 
@@ -348,23 +351,23 @@ class GameManager:
         num_players = len(game.players)
         if num_players + 1 > game.game_state.max_players:
             raise BadArgumentException("Game is full")
-        game.add_player(player)
+        await game.add_player(player)
     
-    def join_any_game(self, player: WebSocket):
+    async def join_any_game(self, player: WebSocket) -> str:
         # If there are no active games, create a new game
         if len(self.active_games) == 0:
-            return self.create_game(playing_to=300, max_players=6, host=player)
+            return await self.create_game(playing_to=300, max_players=6, host=player)
         
         # Join any game that has capacity
-        for game in self.active_games:
-            num_players = len(self.active_games[game].players)
-            max_players = self.active_games[game].game_state.max_players
+        for game in self.active_games.values():
+            num_players = len(game.players)
+            max_players = game.game_state.max_players
             if num_players + 1 > max_players: continue
-            self.active_games[game].add_player(player)
-            return game
+            await game.add_player(player)
+            return game.game_id
 
         # If all games are at capacity, create a new game
-        return self.create_game(playing_to=300, max_players=6, host=player)
+        return await self.create_game(playing_to=300, max_players=6, host=player)
 
 
 
@@ -384,7 +387,7 @@ async def websocket(websocket: WebSocket):
         while True:
             data = await websocket.receive_json()
             try:
-                return_value = sort_message(data, websocket, game_manager)
+                return_value = await sort_message(data, websocket, game_manager)
                 await websocket.send_json(return_value.model_dump())
             except Exception as e:
                 log.error("Error processing message", exc_info=e)
@@ -397,7 +400,7 @@ class MessageStatus(BaseModel):
     status: int
     message: str
 
-def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager) -> MessageStatus:
+async def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager) -> MessageStatus:
     """
     Takes a WebSocket message and "sorts" it to the relevant processing function.
     Structuring it this way reduces indentation.
@@ -416,7 +419,7 @@ def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager)
             playing_to = payload_data.get('playing_to', 300)
             max_players = payload_data.get('max_players', 6)
             
-            game_id = game_manager.create_game(playing_to, max_players, host=websocket)
+            game_id = await game_manager.create_game(playing_to, max_players, host=websocket)
             return MessageStatus(status=200, message=game_id)
         
         case "JOIN_GAME_BY_ID":
@@ -424,11 +427,11 @@ def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager)
             if not game_id:
                 raise BadArgumentException("No game ID in payload")
             
-            game_manager.join_game_by_id(websocket, game_id)
+            await game_manager.join_game_by_id(websocket, game_id)
             return MessageStatus(status=200, message="Success")
 
         case "JOIN_ANY_GAME":
-            game_id = game_manager.join_any_game(websocket)
+            game_id = await game_manager.join_any_game(websocket)
             return MessageStatus(status=200, message=game_id)
         
         case "PROCESS_TURN":

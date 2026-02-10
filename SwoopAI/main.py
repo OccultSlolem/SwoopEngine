@@ -8,6 +8,7 @@ from time import sleep
 from enum import Enum
 from rich import print
 from rich.logging import RichHandler
+from swooplib import GameState, SystemMessageType
 
 LOOP_DELAY = 1000 # ms
 FORMAT = "%(message)s"
@@ -17,11 +18,22 @@ logging.basicConfig(
 )
 log = logging.getLogger("rich")
 
+class GameStatus(str, Enum):
+    IDLE = "IDLE"
+    AWAITING_GAME_START = "AWAITING_GAME_START"
+    AWAITING_TURN = "AWAITING_TURN"
+    MY_TURN = "MY_TURN"
+    COMPLETE = "COMPLETE"
+    ERROR = "ERROR"
+
 ai_port = "8585"
 ai_bridge_address = "127.0.0.1"
 ai_bridge_port = "8000"
 policy_id = "(PLACEHOLDER)"
 current_game_id = ""
+current_game_status: GameStatus = GameStatus.IDLE
+current_game_state: GameState | None = None
+
 
 async def establish_connection():
     uri = f"ws://{ai_bridge_address}:{ai_bridge_port}/ws"
@@ -30,7 +42,7 @@ async def establish_connection():
     TEST_MESSAGE = { "type": "TEST_CONNECTION", "payload": { "test_message": TEST_STRING } }
     await websocket.send(json.dumps(TEST_MESSAGE))
 
-    response =json.loads(await websocket.recv())
+    response = json.loads(await websocket.recv())
     test_response = response.get("message")
     if test_response != TEST_STRING:
         log.critical("Failed to establish connection. Abort.")
@@ -41,37 +53,73 @@ async def establish_connection():
     log.info("Connection to AI Bridge established!")
     return websocket
 
-class GameStatus(str, Enum):
-    IDLE = "IDLE"
-    AWAITING_GAME_START = "AWAITING_GAME_START"
-    AWAITING_TURN = "AWAITING_TURN"
-    MY_TURN = "MY_TURN"
-    COMPLETE = "COMPLETE"
-    ERROR = "ERROR"
+async def listen_for_messages(connection: websockets.ClientConnection):
+    """Listens for messages from the server and updates the game state."""
+    global current_game_status, current_game_state
+    try:
+        async for message_raw in connection:
+            message = json.loads(message_raw)
+            log.debug(f"Received message: {message}")
 
-current_game_status: GameStatus = GameStatus.IDLE
+            # This is a response to a request, not a system broadcast
+            if "status" in message:
+                if message["status"] != 200:
+                    log.error(f"Received error from server: {message.get('message')}")
+                else:
+                    # This is a successful response to a request we sent.
+                    # It might contain the game_id.
+                    response_message = message.get("message")
+                    if response_message and isinstance(response_message, str) and len(response_message) == 36: # Basic check for UUID
+                        current_game_id = response_message
+                        log.info(f"Joined game: {current_game_id}")
+                continue
+
+            # try:
+            #     message.get("message_type")
+            # except:
+            #     print(F"ERROR: {type(message)}")
+            #     print(f"ERROR: {type(json.loads(message))}")
+            #     print(f"ERROR: {message}")
+            message = json.loads(message) # Sometimes it won't load the first time. I don't know why.
+            message_type = message.get("message_type")
+            
+            match message_type:
+                case SystemMessageType.GAME_STATUS:
+                    game_state_data = json.loads(message["message"])
+                    current_game_state = GameState.model_validate(game_state_data)
+                    if current_game_state.game_active:
+                        current_game_status = GameStatus.AWAITING_TURN # Or MY_TURN
+                    else:
+                        current_game_status = GameStatus.AWAITING_GAME_START
+                case SystemMessageType.GAME_COMPLETE:
+                    current_game_status = GameStatus.COMPLETE
+                case _:
+                    log.warning(f"Received unknown message type: {message_type}")
+
+    except websockets.exceptions.ConnectionClosed:
+        log.warning("Connection to server closed.")
+        current_game_status = GameStatus.ERROR
+    except Exception as e:
+        log.error(f"Error processing message: {e}", exc_info=True)
+        current_game_status = GameStatus.ERROR
 
 async def connection_tick(connection: websockets.ClientConnection):
     global current_game_id, current_game_status
     log.debug("Tick")
     match current_game_status:
         case GameStatus.IDLE:
+            log.info("Looking for a game to join...")
             message = { "type": "JOIN_ANY_GAME" }
             await connection.send(json.dumps(message))
-            response = json.loads(await connection.recv())
-            game_id = response.get("message")
-            if not game_id or response["status"] != 200:
-                log.critical("Failed to join/create game! Check ai_bridge logs. Abort.")
-                os._exit(1)
-            current_game_id = game_id
-            log.info(f"Joined game {game_id}")
-            log.info("Waiting for the game to start 😴")
-            current_game_status = GameStatus.AWAITING_GAME_START
+            # The listen_for_messages task will handle the response and state updates.
+            # We just need to wait for the state to change.
         
         case GameStatus.AWAITING_TURN:
             log.debug("Waiting for my turn 😴")
+            sleep(LOOP_DELAY)
         case GameStatus.AWAITING_GAME_START:
             log.debug("Waiting for the game to start 😴")
+            sleep(LOOP_DELAY)
 
         case GameStatus.MY_TURN:
             pass # TODO
@@ -101,7 +149,9 @@ async def connection_loop(connection: websockets.ClientConnection):
 
     global current_game_status, current_game_id
 
-    while True:
+    listen_task = asyncio.create_task(listen_for_messages(connection))
+
+    while not listen_task.done():
         log.debug(f"Current game status: {current_game_status}")
         try:
             await connection_tick(connection)

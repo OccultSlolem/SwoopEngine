@@ -1,4 +1,4 @@
-from .main import (
+from .swooplib import (
     Card,
     CardPlay,
     CardSuit,
