@@ -1,17 +1,15 @@
 import unittest
 import unittest.mock
 from unittest.mock import Mock, patch
+import asyncio
+from uuid import uuid4
 from ai_bridge.main import (
     Game, initialize_card_deck, IllegalMoveException, GameNotStartedException,
     sort_message, BadArgumentException, GameManager
 )
-
 from swooplib import (
     PlayedFrom, TurnOutcome, Card, CardSuit, TurnActionRequest, CardPlay,
 )
-
-import asyncio
-from uuid import uuid4
 
 def add(a: int, b: int):
     return a+b
