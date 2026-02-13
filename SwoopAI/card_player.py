@@ -16,11 +16,11 @@ def is_play_legal(plays: List[CardPlay], player_stack: PlayerCardStack) -> bool:
 
     if len(plays) == 0: return True
 
-    first_rank = plays[0].card.rank
+    play_rank = plays[0].card.rank
 
     for play in plays:
         card = play.card
-        if card.rank != first_rank: return False
+        if card.rank != play_rank: return False
         match play.played_from:
             case PlayedFrom.CARDS_IN_HAND:
                 if card not in player_stack.cards_in_hand: return False

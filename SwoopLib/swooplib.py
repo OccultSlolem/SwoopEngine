@@ -65,3 +65,32 @@ class SystemMessageType(str, Enum):
 class SystemMessage(BaseModel):
     message_type: SystemMessageType
     message: str
+
+def is_swoop(rank_played: int, num_cards_played: int, live_cards: List[Card]) -> bool:
+    """
+    Returns true if the play resulted in a swoop. A swoop occured if any of the following
+    are true:
+
+    - The player put down a ten or jack (ranks 10 and 11)
+    - The player put down four or more cards of the same rank
+    - The top four or more live cards, including what the player just put down,
+    have the same rank
+    """
+    if rank_played == 10 or rank_played == 11: return True
+    if num_cards_played >= 4: return True
+    
+    if len(live_cards) == 0: return False
+    latest_live_card_rank = live_cards[-1].rank
+    if latest_live_card_rank != rank_played: return False
+
+    count = 0
+    for card in reversed(live_cards):
+        if card.rank == rank_played:
+            count += 1
+        else:
+            break
+    
+    if count + num_cards_played >= 4:
+        return True
+
+    return False

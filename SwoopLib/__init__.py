@@ -11,4 +11,5 @@ from .swooplib import (
     TurnActionLog,
     TurnActionRequest,
     TurnOutcome,
+    is_swoop
 )
