@@ -66,6 +66,15 @@ class SystemMessage(BaseModel):
     message_type: SystemMessageType
     message: str
 
+def is_card_playable(card: Card, table_rank: int) -> bool:
+    if card.rank == 10 or card.rank == 11:
+        return True
+    
+    if card.rank <= table_rank:
+        return True
+    
+    return False
+
 def is_swoop(rank_played: int, num_cards_played: int, live_cards: List[Card]) -> bool:
     """
     Returns true if the play resulted in a swoop. A swoop occured if any of the following

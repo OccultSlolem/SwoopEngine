@@ -8,7 +8,8 @@ from time import sleep
 from enum import Enum
 from rich import print
 from rich.logging import RichHandler
-from swooplib import GameState, SystemMessageType
+from swooplib import GameState, SystemMessageType, PlayerCardStack
+from card_player import simple_turn_processor
 
 LOOP_DELAY = 1000 # ms
 FORMAT = "%(message)s"
@@ -33,7 +34,7 @@ policy_id = "(PLACEHOLDER)"
 current_game_id = ""
 current_game_status: GameStatus = GameStatus.IDLE
 current_game_state: GameState | None = None
-
+current_card_stack: PlayerCardStack | None = None
 
 async def establish_connection():
     uri = f"ws://{ai_bridge_address}:{ai_bridge_port}/ws"
@@ -122,6 +123,7 @@ async def connection_tick(connection: websockets.ClientConnection):
             sleep(LOOP_DELAY)
 
         case GameStatus.MY_TURN:
+            # play = simple_turn_processor()
             pass # TODO
 
         case GameStatus.COMPLETE:
