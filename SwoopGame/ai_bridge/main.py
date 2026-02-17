@@ -1,16 +1,18 @@
 from typing import Optional, List, Dict
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from uuid import uuid4
-from enum import Enum
 from random import shuffle
+from copy import deepcopy
 from math import inf
 import asyncio
 import logging
+import json
 import os
 from swooplib import (
     is_swoop,
     Card,
+    CardPlay,
     CardSuit,
     GameState,
     PlayedFrom,
@@ -20,6 +22,7 @@ from swooplib import (
     TableCardPair,
     TurnActionRequest,
     TurnOutcome,
+    ClientMessageType
 )
 
 
@@ -34,7 +37,7 @@ def initialize_card_deck(num_players: int):
     # 4. Return the remaining cards in the deck and each player's decks
 
     # 1
-    SUITS: List[CardSuit] = list(CardSuit)
+    SUITS: List[CardSuit] = [suit for suit in CardSuit if suit != CardSuit.UNKNOWN]
     four_card_decks: List[Card] = []
 
     for _ in range(4):
@@ -61,10 +64,10 @@ def initialize_card_deck(num_players: int):
             stack.cards_in_hand.append(card)
         
         # Distribute 4 pairs of cards to table_cards
-        for _ in range(4):
+        for pair_number in range(4):
             card_down = shuffled_deck.pop()
             card_up = shuffled_deck.pop()
-            stack.table_cards.append(TableCardPair(face_down_card=card_down, face_up_card=card_up))
+            stack.table_cards.append(TableCardPair(pair_number=pair_number, face_down_card=card_down, face_up_card=card_up))
         
         player_stacks.append(stack)
     
@@ -108,12 +111,22 @@ class Game:
         log.info(f"GAME CREATED: {game_id}")
             
     
-    async def add_player(self, websocket: WebSocket):
+    async def add_player(self, websocket: WebSocket) -> int:
+        """Join a game and return the player number of who joined"""
         if (self.game_state.game_active):
             raise GameAlreadyStartedException("This game has already started, can't add new players")
         log.info(f"Player added to game {self.game_id}: {websocket.client.host}:{websocket.client.port}") # type: ignore
         self.players.append(websocket)
+        joined_game_message = SystemMessage(
+            message_type=SystemMessageType.GAME_JOINED, 
+            message=str({
+                "game_id": self.game_id,
+                "player_number": len(self.players) - 1
+            })
+        )
+        await websocket.send_json(joined_game_message.model_dump_json())
         await self.broadcast_game_state()
+        return len(self.players) - 1
     
     async def remove_player(self, websocket: WebSocket):
         if websocket not in self.players:
@@ -136,6 +149,13 @@ class Game:
             self.game_state.player_points.append(0)
         log.info(f"GAME STARTED: {self.game_id}")
         await self.broadcast_game_state()
+    
+    async def abort_game(self, message: Optional[str]):
+        """Disconnect all clients and save game to disk"""
+        log.critical(f"ABORTING GAME {self.game_id}: {message}")
+        for player in self.players: await player.close()
+        self.save_game_to_disk()
+
     
     def process_turn(self, player: int, action_request: TurnActionRequest) -> TurnOutcome:
         # 1. Parse what the player did
@@ -164,7 +184,27 @@ class Game:
             self.game_state.live_cards = []
             return TurnOutcome.PICKED_UP_CARDS_ON_TABLE
         
-        top_live_rank = self.game_state.live_cards[-1].rank if len(self.game_state.live_cards) > 0 else inf
+        top_live_rank = self.game_state.live_cards[0].rank if len(self.game_state.live_cards) > 0 else inf
+
+        # Check if the player put down an upside down table card
+        if action_request.upside_down_card_played is not None:
+            # This is a blind play. The player doesn't know what card they are playing.
+            pair = next(p for p in player_stack.table_cards if p.pair_number == action_request.upside_down_card_played)
+
+            if not pair.face_down_card:
+                print("***")
+                print(f"Player's table cards: {player_stack.table_cards}")
+                raise IllegalMoveException("This pair doesn't seem to have an upside down card")
+            
+            card_played = pair.face_down_card
+            if card_played.rank > top_live_rank: 
+                player_stack.cards_in_hand.extend(self.game_state.live_cards)
+                self.game_state.live_cards = []
+                return TurnOutcome.PICKED_UP_CARDS_ON_TABLE
+            
+            # The player can only play this one card. We'll send it through the processing system like any other.
+            action_request.cards_played = [CardPlay(card=pair.face_down_card, played_from=PlayedFrom.UPSIDE_DOWN_TABLE_CARD)]
+
 
         # Validate that the cards played exist in the player's stack
         for play in action_request.cards_played:
@@ -178,24 +218,9 @@ class Game:
                 if not any(d.face_up_card == card_played for d in player_stack.table_cards):
                     raise IllegalMoveException(f"Card {card_played} not on player's face-up table cards.")
             elif played_from == PlayedFrom.UPSIDE_DOWN_TABLE_CARD:
+                # This shouldn't be necessary since it's picked right out of the player's hand, but we'll validate it just in case
                 if not any(d.face_down_card == card_played for d in player_stack.table_cards):
                     raise IllegalMoveException(f"Card {card_played} not on player's face-down table cards.")
-
-        # Check if the player put down an upside down table card
-        if any(
-            play.played_from == PlayedFrom.UPSIDE_DOWN_TABLE_CARD
-            for play in action_request.cards_played
-        ):
-            # This is a blind play. The player doesn't know what card they are playing.
-            # They can only play one card.
-            if len(action_request.cards_played) > 1:
-                raise IllegalMoveException("When playing a face-down card, you can only play that one card.")
-            
-            card_played = action_request.cards_played[0].card
-            if card_played.rank > top_live_rank: 
-                player_stack.cards_in_hand.extend(self.game_state.live_cards)
-                self.game_state.live_cards = []
-                return TurnOutcome.PICKED_UP_CARDS_ON_TABLE
         
         # Validate that all cards played have the same rank
         first_card_rank = action_request.cards_played[0].card.rank
@@ -229,7 +254,7 @@ class Game:
         
         # Add played cards to the live_cards pile
         played_cards = [play.card for play in action_request.cards_played]
-        self.game_state.live_cards.extend(played_cards)
+        self.game_state.live_cards = played_cards + self.game_state.live_cards
 
         # Check for victory condition
         if (
@@ -255,6 +280,70 @@ class Game:
     async def broadcast_game_state(self):
         message = SystemMessage(message_type=SystemMessageType.GAME_STATUS, message=self.game_state.model_dump_json())
         await self.broadcast_all(message)
+    
+    def sanitize_table_cards(self, table_cards: List[TableCardPair]) -> List[TableCardPair]:
+        sanitized_pairs: List[TableCardPair] = []
+        for pair in table_cards:
+            sanitized_pair = TableCardPair(
+                pair_number=pair.pair_number,
+                face_down_card=Card(suit=CardSuit.UNKNOWN, rank=0) if pair.face_down_card else None,
+                face_up_card=pair.face_up_card
+            )
+            sanitized_pairs.append(sanitized_pair)
+        
+        return sanitized_pairs
+
+    def sanitize_other_player_cards(self, other_card_stack: PlayerCardStack) -> PlayerCardStack:
+        """
+        Sanitizes another player's card stack for a given player's viewing. Use this before transmitting to each player
+        the state of the table.
+        """
+        sanitized_stack = PlayerCardStack(
+            table_cards=self.sanitize_table_cards(other_card_stack.table_cards),
+            cards_in_hand=[]
+        )
+        for _ in range(len(other_card_stack.cards_in_hand)):
+            sanitized_stack.cards_in_hand.append(Card(suit=CardSuit.UNKNOWN, rank=0))
+
+        return sanitized_stack
+    
+    def sanitize_my_cards(self, my_card_stack: PlayerCardStack) -> PlayerCardStack:
+        """
+        Sanitizes a player's card stack for their own viewing. Use this before transmitting to each player
+        the state of their cards.
+        """
+        sanitized_stack = PlayerCardStack(
+            table_cards=self.sanitize_table_cards(my_card_stack.table_cards),
+            cards_in_hand=my_card_stack.cards_in_hand
+        )
+
+        return sanitized_stack
+    
+    async def broadcast_sanitized_game_state(self):
+        # Each player should not be able to view the cards in hand of other players
+        # They also should not be able to see any face down table cards, including their own
+        # Create a set of player stacks for each player
+
+        num_players = len(self.players)
+
+        for viewing_player_idx in range(num_players):
+            player_websocket = self.players[viewing_player_idx]
+            if not player_websocket:
+                # FIXME: More graceful error handling
+                await self.abort_game(f"A player disconnected, the websockets are all out of order. Abort the game.")
+                return
+            
+            sanitized_state = deepcopy(self.game_state)
+            sanitized_state.player_card_stacks = []
+            for stack_player_idx in range(num_players):
+                if viewing_player_idx == stack_player_idx:
+                    sanitized_state.player_card_stacks.append(self.sanitize_my_cards(self.game_state.player_card_stacks[stack_player_idx]))
+                else:
+                    sanitized_state.player_card_stacks.append(self.sanitize_other_player_cards(self.game_state.player_card_stacks[stack_player_idx]))
+                
+            
+            message = SystemMessage(message_type=SystemMessageType.GAME_STATUS, message=sanitized_state.model_dump_json())
+            await player_websocket.send_json(message.model_dump_json())
 
     async def process_round_completion(self):
         # Assign points based on how many cards people have left
@@ -314,32 +403,37 @@ class GameManager:
         self.active_games[game_id] = game_state
         return game_id
     
-    async def join_game_by_id(self, player: WebSocket, game_id: str):
+    async def join_game_by_id(self, player: WebSocket, game_id: str) -> int:
+        """Join a game by its ID and return the player number. Will return -1 if it failed."""
         if game_id not in self.active_games:
-            raise BadArgumentException(f"Game with ID {game_id} not found.")
+            log.warning(f"Player attempted to join game {game_id} but was not found.")
+            return -1
 
         game = self.active_games[game_id]
         # Check if there is room for the additional player
         num_players = len(game.players)
         if num_players + 1 > game.game_state.max_players:
-            raise BadArgumentException("Game is full")
-        await game.add_player(player)
+            return -1
+        player_number = await game.add_player(player)
+        return player_number
     
-    async def join_any_game(self, player: WebSocket) -> str:
+    async def join_any_game(self, player: WebSocket) -> tuple[str, int]:
+        requester_player_number = 0
+
         # If there are no active games, create a new game
         if len(self.active_games) == 0:
-            return await self.create_game(playing_to=300, max_players=6, host=player)
+            return (await self.create_game(playing_to=300, max_players=6, host=player), requester_player_number)
         
         # Join any game that has capacity
         for game in self.active_games.values():
             num_players = len(game.players)
             max_players = game.game_state.max_players
             if num_players + 1 > max_players: continue
-            await game.add_player(player)
-            return game.game_id
+            requester_player_number = await game.add_player(player)
+            return game.game_id, requester_player_number
 
         # If all games are at capacity, create a new game
-        return await self.create_game(playing_to=300, max_players=6, host=player)
+        return (await self.create_game(playing_to=300, max_players=6, host=player), requester_player_number)
 
 
 
@@ -372,42 +466,53 @@ class MessageStatus(BaseModel):
     status: int
     message: str
 
-async def sort_message(message: Dict, websocket: WebSocket, game_manager: GameManager) -> MessageStatus:
+async def sort_message(response: Dict, websocket: WebSocket, game_manager: GameManager) -> MessageStatus:
     """
     Takes a WebSocket message and "sorts" it to the relevant processing function.
     Structuring it this way reduces indentation.
     """
-    message_type = message.get("type")
+    message_type = response.get("type")
     if not message_type:
         return MessageStatus(status=400, message="No message type specified")
     
-    payload_data = message.get("payload", {})
+    payload_data = response.get("payload", {})
     
     match message_type:
-        case "TEST_CONNECTION":
+        case ClientMessageType.TEST_CONNECTION:
             return MessageStatus( status=200, message=payload_data.get("test_message", "Connection successful"))
 
-        case "CREATE_GAME":
+        case ClientMessageType.CREATE_GAME:
             playing_to = payload_data.get('playing_to', 300)
             max_players = payload_data.get('max_players', 6)
             
             game_id = await game_manager.create_game(playing_to, max_players, host=websocket)
             return MessageStatus(status=200, message=game_id)
         
-        case "JOIN_GAME_BY_ID":
+        case ClientMessageType.JOIN_GAME_BY_ID:
             game_id = payload_data.get('game_id')
             if not game_id:
                 raise BadArgumentException("No game ID in payload")
             
-            await game_manager.join_game_by_id(websocket, game_id)
-            return MessageStatus(status=200, message="Success")
+            player_number = await game_manager.join_game_by_id(websocket, game_id)
+            response = {
+                "player_number": player_number
+            }
+            status_number = 200 if player_number > -1 else 400
+            return MessageStatus(status=status_number, message=json.dumps(response))
 
-        case "JOIN_ANY_GAME":
-            game_id = await game_manager.join_any_game(websocket)
-            return MessageStatus(status=200, message=game_id)
+        case ClientMessageType.JOIN_ANY_GAME:
+            game_id, player_number = await game_manager.join_any_game(websocket)
+            response = {
+                "game_id": game_id,
+                "player_number": player_number
+            }
+            return MessageStatus(status=200, message=json.dumps(response))
         
-        case "PROCESS_TURN":
-            cards_played = payload_data.get("cards_played")
+        case ClientMessageType.PROCESS_TURN:
+            print(f"Processing a turn: {payload_data}")
+            turn_request = payload_data.get("turn_request")
+            cards_played = turn_request.get("cards_played")
+            upside_down_card_played = turn_request.get("upside_down_card_played", None)
             game_id = payload_data.get("game_id")
             if cards_played is None:
                 return MessageStatus(status=400, message="No cards_played in payload")
@@ -416,6 +521,8 @@ async def sort_message(message: Dict, websocket: WebSocket, game_manager: GameMa
                 return MessageStatus(status=400, message="No game ID specified")
             
             if game_id not in game_manager.active_games:
+                log.warning(game_id)
+                log.warning(game_manager.active_games.get(game_id))
                 return MessageStatus(status=400, message="Game does not exist or is not active")
             
             game = game_manager.active_games[game_id]
@@ -424,12 +531,25 @@ async def sort_message(message: Dict, websocket: WebSocket, game_manager: GameMa
                 return MessageStatus(status=400, message="You are not in this game")
             
             try:
-                action_request = TurnActionRequest(cards_played=cards_played)
+                action_request = TurnActionRequest(cards_played=cards_played, upside_down_card_played=upside_down_card_played)
             except Exception as e:
-                return MessageStatus(status=400, message=f"Invalid cards_played format: {e}")
+                return MessageStatus(status=400, message=f"Invalid turn request format: {e}")
             
             try:
+                print(f"Current player: {game.game_state.player_turn}")
+                table_rank = 999 if not game.game_state.live_cards else game.game_state.live_cards[0].rank
+                print(f"Current table rank: {table_rank}")
                 outcome = game.process_turn(player_number, action_request)
+                print(f"Outcome: {outcome}")
+                if outcome != TurnOutcome.VICTORY and outcome != TurnOutcome.SWOOP:
+                    # Move to next turn
+                    wrap_turns_around = game.game_state.player_turn == len(game.players) - 1
+                    game.game_state.player_turn = game.game_state.player_turn + 1 if not wrap_turns_around else 0
+                
+                print("---")
+                
+                await game.broadcast_sanitized_game_state()
+                     
                 return MessageStatus(status=200, message=f"Turn processed with outcome: {outcome.value}")
             except Exception as e:
                 log.error(e)
@@ -437,3 +557,17 @@ async def sort_message(message: Dict, websocket: WebSocket, game_manager: GameMa
         
         case _:
             return MessageStatus(status=400, message=F"Unknown message type: {message_type}")
+
+@app.post("/start-games")
+async def start_all_games():
+    """Start all games that have at least 2 players"""
+    started_games = []
+    for game_id, game in game_manager.active_games.items():
+        if len(game.players) >= 2 and not game.game_state.game_active:
+            try:
+                await game.start_game()
+                started_games.append(game_id)
+            except Exception as e:
+                log.error(f"Failed to start game {game_id}: {e}")
+    
+    return MessageStatus(status=200, message=f"Started {len(started_games)} games")

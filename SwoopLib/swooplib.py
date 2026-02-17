@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Any
 from enum import Enum
 
 class CardSuit(str, Enum):
@@ -7,12 +7,16 @@ class CardSuit(str, Enum):
     CLUBS = 'clubs'
     SPADES = 'spades'
     HEARTS = 'hearts'
+    UNKNOWN = 'unknown' # Used for invisible cards (ie other player's cards or face down table cards)
 
 class Card(BaseModel):
     suit: CardSuit
-    rank: int = Field(..., ge=1, le=13)
+    # 1 is an ace
+    # 0 is a placeholder for an invisible card
+    rank: int = Field(..., ge=0, le=13)
 
 class TableCardPair(BaseModel):
+    pair_number: int
     face_down_card: Optional[Card]
     face_up_card: Optional[Card]
 
@@ -44,6 +48,7 @@ class CardPlay(BaseModel):
 
 class TurnActionRequest(BaseModel):
     cards_played: List[CardPlay]
+    upside_down_card_played: Optional[int]
 
 class GameState(BaseModel):
     table_deck: List[Card]
@@ -57,6 +62,8 @@ class GameState(BaseModel):
     game_active: bool
     
 class SystemMessageType(str, Enum):
+    GAME_JOINED = 'GAME_JOINED'
+    GAME_JOIN_FAILED = 'GAME_JOIN_FAILED'
     GAME_STATUS = 'GAME_STATUS'
     GAME_STARTING = 'GAME_STARTING'
     ROUND_COMPLETE = 'ROUND_COMPLETE'
@@ -65,6 +72,17 @@ class SystemMessageType(str, Enum):
 class SystemMessage(BaseModel):
     message_type: SystemMessageType
     message: str
+
+class ClientMessageType(str, Enum):
+    TEST_CONNECTION = 'TEST_CONNECTION'
+    CREATE_GAME = 'CREATE_GAME'
+    JOIN_GAME_BY_ID = 'JOIN_GAME_BY_ID'
+    JOIN_ANY_GAME = 'JOIN_ANY_GAME'
+    PROCESS_TURN = 'PROCESS_TURN'
+
+class ClientMessage(BaseModel):
+    type: ClientMessageType
+    payload: Any
 
 def is_card_playable(card: Card, table_rank: int) -> bool:
     if card.rank == 10 or card.rank == 11:

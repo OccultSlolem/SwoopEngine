@@ -1,9 +1,9 @@
 """This guy is a "step 1" AI for SwoopEngine. All it does is find the first legal move and play it."""
 
-from swooplib import is_swoop, is_card_playable, Card, CardPlay, PlayerCardStack, PlayedFrom, TableCardPair
+from swooplib import is_swoop, is_card_playable, Card, CardPlay, PlayerCardStack, PlayedFrom, TableCardPair, TurnActionRequest
 from itertools import chain, combinations
 from typing import List, Optional
-from random import randint
+from random import choice
 import numpy as np
 
 
@@ -67,7 +67,7 @@ def is_play_legal(plays: List[CardPlay], player_stack: PlayerCardStack, live_car
     # 6
     return True
 
-def calculate_legal_plays(player_stack: PlayerCardStack, live_cards: List[Card])-> List[List[CardPlay]]:
+def calculate_legal_plays(player_stack: PlayerCardStack, live_cards: List[Card])-> List[TurnActionRequest]:
     """
     Returns a matrix consisting of all possible plays given the player's stack and the table state.
 
@@ -82,12 +82,15 @@ def calculate_legal_plays(player_stack: PlayerCardStack, live_cards: List[Card])
         satisfied.
     """
 
-    legal_plays: List[List[CardPlay]] = []
+    print("---")
+
+    legal_plays: List[TurnActionRequest] = []
     # Use a very very big number for table_rank if there are no live cards
     table_rank = 10*100 if not live_cards else live_cards[0].rank
     playable_cards: List[CardPlay] = []
 
     for table_pair in player_stack.table_cards:
+        pair_number = table_pair.pair_number
         face_up_card = table_pair.face_up_card
         face_down_card = table_pair.face_down_card
 
@@ -96,7 +99,10 @@ def calculate_legal_plays(player_stack: PlayerCardStack, live_cards: List[Card])
         if face_down_card and not face_up_card:
             # face down cards can only be played by themselves and cannot be joined with other cards
             # add each uncovered one as a legal play
-            legal_plays.append([CardPlay(card=face_down_card, played_from=PlayedFrom.UPSIDE_DOWN_TABLE_CARD)])
+            legal_plays.append(TurnActionRequest(
+                cards_played=[CardPlay(card=face_down_card, played_from=PlayedFrom.UPSIDE_DOWN_TABLE_CARD)], 
+                upside_down_card_played=pair_number
+            ))
     
     for card in player_stack.cards_in_hand:
         if is_card_playable(card, table_rank): playable_cards.append(CardPlay(card=card, played_from=PlayedFrom.CARDS_IN_HAND))
@@ -110,15 +116,18 @@ def calculate_legal_plays(player_stack: PlayerCardStack, live_cards: List[Card])
         s = list(rank_group)
         # Generate the power set for cards of the same rank
         power_set = [list(combo) for combo in chain.from_iterable(combinations(s, r) for r in range(1, len(s) + 1))]
-        legal_plays.extend(power_set)
+        legal_plays.extend([TurnActionRequest(cards_played=combo, upside_down_card_played=None) for combo in power_set])
     
     # Add the option to pass (playing no cards)
-    legal_plays.append([])
+    legal_plays.append(TurnActionRequest(cards_played=[], upside_down_card_played=None))
 
     return legal_plays
 
 # Select any random play!
-def simple_turn_processor(current_stack: PlayerCardStack, live_cards: List[Card]) -> List[CardPlay]:
+def simple_turn_processor(current_stack: PlayerCardStack, live_cards: List[Card]) -> TurnActionRequest:
     plays = calculate_legal_plays(current_stack, live_cards)
-    random_play = randint(0, len(plays))
-    return plays[random_play]
+    if not plays:
+        # This should theoretically not happen since passing is always an option,
+        # but it's good practice to handle it.
+        return TurnActionRequest(cards_played=[], upside_down_card_played=None)
+    return choice(plays)

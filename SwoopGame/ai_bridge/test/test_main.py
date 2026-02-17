@@ -63,14 +63,14 @@ class TestGameTurnProcessing(unittest.TestCase):
         """Test that an exception is raised if a turn is processed before the game starts."""
         game_id = str(uuid4())
         game = Game(playing_to=100, max_players=6, game_id=game_id)
-        action = TurnActionRequest(cards_played=[])
+        action = TurnActionRequest(cards_played=[], upside_down_card_played=None)
         with self.assertRaises(GameNotStartedException):
             game.process_turn(0, action)
 
     def test_process_turn_wrong_player(self):
         """Test that an exception is raised if the wrong player tries to play."""
         self.game.game_state.player_turn = 0
-        action = TurnActionRequest(cards_played=[])
+        action = TurnActionRequest(cards_played=[], upside_down_card_played=None)
         with self.assertRaises(IllegalMoveException):
             self.game.process_turn(1, action)
 
@@ -78,7 +78,7 @@ class TestGameTurnProcessing(unittest.TestCase):
         """Test that a player picks up the live cards if they pass their turn."""
         self.game.game_state.live_cards = [Card(suit=CardSuit.HEARTS, rank=5)]
         player_hand_before = len(self.game.game_state.player_card_stacks[0].cards_in_hand)
-        action = TurnActionRequest(cards_played=[])
+        action = TurnActionRequest(cards_played=[], upside_down_card_played=None)
         outcome = self.game.process_turn(0, action)
         self.assertEqual(outcome, TurnOutcome.PICKED_UP_CARDS_ON_TABLE)
         self.assertEqual(len(self.game.game_state.live_cards), 0)
@@ -101,7 +101,7 @@ class TestGameTurnProcessing(unittest.TestCase):
                 if 'card_not_in_hand' in locals():
                     break
 
-        action = TurnActionRequest(cards_played=[CardPlay(card=card_not_in_hand, played_from=PlayedFrom.CARDS_IN_HAND)])
+        action = TurnActionRequest(cards_played=[CardPlay(card=card_not_in_hand, played_from=PlayedFrom.CARDS_IN_HAND)], upside_down_card_played=None)
         with self.assertRaises(IllegalMoveException):
             self.game.process_turn(0, action)
 
@@ -115,7 +115,7 @@ class TestGameTurnProcessing(unittest.TestCase):
         # Set up the game state for a legal move
         self.game.game_state.live_cards = [Card(suit=CardSuit.HEARTS, rank=5)]
         
-        action = TurnActionRequest(cards_played=[CardPlay(card=card_to_play, played_from=PlayedFrom.CARDS_IN_HAND)])
+        action = TurnActionRequest(cards_played=[CardPlay(card=card_to_play, played_from=PlayedFrom.CARDS_IN_HAND)], upside_down_card_played=None)
         outcome = self.game.process_turn(0, action)
         
         self.assertEqual(outcome, TurnOutcome.REGULAR_TURN)
@@ -129,7 +129,7 @@ class TestGameTurnProcessing(unittest.TestCase):
         
         self.game.game_state.live_cards = [Card(suit=CardSuit.HEARTS, rank=5)]
         
-        action = TurnActionRequest(cards_played=[CardPlay(card=card_to_play, played_from=PlayedFrom.CARDS_IN_HAND)])
+        action = TurnActionRequest(cards_played=[CardPlay(card=card_to_play, played_from=PlayedFrom.CARDS_IN_HAND)], upside_down_card_played=None)
         outcome = self.game.process_turn(0, action)
         
         self.assertEqual(outcome, TurnOutcome.SWOOP)
@@ -146,7 +146,7 @@ class TestGameTurnProcessing(unittest.TestCase):
 
         self.game.game_state.live_cards = [Card(suit=CardSuit.HEARTS, rank=5)]
         
-        action = TurnActionRequest(cards_played=[CardPlay(card=last_card, played_from=PlayedFrom.CARDS_IN_HAND)])
+        action = TurnActionRequest(cards_played=[CardPlay(card=last_card, played_from=PlayedFrom.CARDS_IN_HAND)], upside_down_card_played=None)
         outcome = self.game.process_turn(0, action)
         
         self.assertEqual(outcome, TurnOutcome.VICTORY)
